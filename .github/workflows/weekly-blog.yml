@@ -4,6 +4,30 @@ on:
   schedule:
     - cron: '0 9 * * 1'  # 毎週月曜 9:00 UTC（日本時間18:00）
   workflow_dispatch:      # 手動実行も可能
+    # Every Monday at 09:00 UTC
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+    inputs:
+      blog_mode:
+        description: "LLM backend: openai or ollama"
+        required: false
+        default: "openai"
+        type: choice
+        options:
+          - openai
+          - ollama
+      blog_days:
+        description: "Number of days to look back (default: 7)"
+        required: false
+        default: "7"
+      blog_date:
+        description: "Override output date (YYYY-MM-DD, default: today UTC)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+  pull-requests: write
 
 jobs:
   generate-blog:

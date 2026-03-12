@@ -47,7 +47,7 @@ jobs:
 
           for item in logs/*; do
             item_basename=$(basename "$item")
-            prefix=$(echo "$item_basename" | grep -oP '^\d{8}')
+            prefix=$(echo "$item_basename" | grep -oP '^\d{8}' || true)
 
             if [[ -z "$prefix" || "$prefix" -lt "$START_DATE" || "$prefix" -gt "$END_DATE" ]]; then
               continue

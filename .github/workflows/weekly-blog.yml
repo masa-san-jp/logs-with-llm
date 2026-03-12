@@ -5,14 +5,6 @@ on:
     - cron: '0 9 * * 1'  # 毎週月曜 9:00 UTC（日本時間18:00）
   workflow_dispatch:      # 手動実行も可能
     inputs:
-      blog_mode:
-        description: "LLM backend: openai or ollama"
-        required: false
-        default: "openai"
-        type: choice
-        options:
-          - openai
-          - ollama
       blog_days:
         description: "Number of days to look back (default: 7)"
         required: false
@@ -24,7 +16,6 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
 
 jobs:
   generate-blog:
@@ -39,9 +30,10 @@ jobs:
       - name: 対象ログファイルを収集
         id: collect
         run: |
-          START_DATE=$(date -d '7 days ago' +%Y%m%d)
+          DAYS="${{ inputs.blog_days || '7' }}"
+          START_DATE=$(date -d "${DAYS} days ago" +%Y%m%d)
           END_DATE=$(date +%Y%m%d)
-          echo "対象期間: $START_DATE 〜 $END_DATE"
+          echo "対象期間: $START_DATE 〜 $END_DATE (${DAYS}日分)"
 
           TARGET_FILES=()
 
@@ -73,7 +65,15 @@ jobs:
           echo "start_date=$START_DATE" >> "$GITHUB_OUTPUT"
           echo "end_date=$END_DATE" >> "$GITHUB_OUTPUT"
 
-          # ログ内容をファイルに書き出し（echo -e の代わりに cat >> を使用）
+          OVERRIDE_DATE="${{ inputs.blog_date }}"
+          if [[ -n "$OVERRIDE_DATE" ]]; then
+            OUTPUT_DATE=$(date -d "$OVERRIDE_DATE" +%Y%m%d 2>/dev/null || date +%Y%m%d)
+          else
+            OUTPUT_DATE=$(date +%Y%m%d)
+          fi
+          echo "output_date=$OUTPUT_DATE" >> "$GITHUB_OUTPUT"
+
+          # ログ内容をファイルに書き出し
           > /tmp/weekly_logs.txt
           for f in "${TARGET_FILES[@]}"; do
             printf '\n\n---\n### ファイル: %s\n\n' "$f" >> /tmp/weekly_logs.txt
@@ -90,6 +90,7 @@ jobs:
         run: |
           START_DATE="${{ steps.collect.outputs.start_date }}"
           END_DATE="${{ steps.collect.outputs.end_date }}"
+          OUTPUT_DATE="${{ steps.collect.outputs.output_date }}"
 
           SYSTEM_PROMPT='あなたは、私（masa）の週次ブログ記事を代わりに書くライターです。
 
@@ -163,7 +164,7 @@ jobs:
             exit 1
           fi
 
-          FILENAME="blog/$(date +%Y%m%d)-weekly.md"
+          FILENAME="blog/${OUTPUT_DATE}-weekly.md"
           mkdir -p blog
           printf '%s\n' "$BLOG" > "$FILENAME"
           echo "blog_file=$FILENAME" >> "$GITHUB_OUTPUT"
@@ -177,6 +178,7 @@ jobs:
         run: |
           START_DATE="${{ steps.collect.outputs.start_date }}"
           END_DATE="${{ steps.collect.outputs.end_date }}"
+          OUTPUT_DATE="${{ steps.collect.outputs.output_date }}"
 
           SYSTEM_PROMPT='You are a writer who creates weekly blog posts on behalf of masa.
 
@@ -204,9 +206,18 @@ jobs:
           Also come up with a title (catchy but not clickbaity).
           Output in markdown format, with the title as the first line (# Title).'
 
+          # Apply same masking as Japanese version before sending to API
+          REDACTED_LOGS="$(sed -E '
+            s/(api[_-]?key\s*[:=]\s*)[A-Za-z0-9._-]+/\1[REDACTED]/gi;
+            s/(token\s*[:=]\s*)[A-Za-z0-9._-]+/\1[REDACTED]/gi;
+            s/(password\s*[:=]\s*)[^[:space:]]+/\1[REDACTED]/gi;
+            s/(authorization\s*[:=]\s*Bearer\s+)[^[:space:]]+/\1[REDACTED]/gi;
+            s/[A-Za-z0-9+\/=_-]{32,}/[REDACTED]/g
+          ' /tmp/weekly_logs.txt)"
+
           USER_CONTENT="Below are this week's (${START_DATE}–${END_DATE}) LLM discussion logs:
 
-          $(cat /tmp/weekly_logs.txt)"
+          ${REDACTED_LOGS}"
 
           RESPONSE=$(curl -s -w "\n%{http_code}" https://api.anthropic.com/v1/messages \
             -H "x-api-key: $ANTHROPIC_API_KEY" \
@@ -240,14 +251,14 @@ jobs:
             exit 1
           fi
 
-          FILENAME_EN="blog/$(date +%Y%m%d)-weekly-en.md"
+          FILENAME_EN="blog/${OUTPUT_DATE}-weekly-en.md"
           mkdir -p blog
           printf '%s\n' "$BLOG_EN" > "$FILENAME_EN"
           echo "blog_file_en=$FILENAME_EN" >> "$GITHUB_OUTPUT"
           echo "英語版生成完了: $FILENAME_EN"
 
       - name: 生成したブログをリポジトリにコミット
-        if: steps.collect.outputs.has_files == 'true'
+        if: steps.collect.outputs.has_files == 'true' && (steps.generate.outcome == 'success' || steps.generate_en.outcome == 'success')
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"

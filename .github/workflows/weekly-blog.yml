@@ -4,9 +4,6 @@ on:
   schedule:
     - cron: '0 9 * * 1'  # 毎週月曜 9:00 UTC（日本時間18:00）
   workflow_dispatch:      # 手動実行も可能
-    # Every Monday at 09:00 UTC
-    - cron: "0 9 * * 1"
-  workflow_dispatch:
     inputs:
       blog_mode:
         description: "LLM backend: openai or ollama"

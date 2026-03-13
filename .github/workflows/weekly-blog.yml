@@ -2,9 +2,21 @@ name: Weekly Blog Generator
 
 on:
   schedule:
-    - cron: '0 9 * * 1'  # 毎週月曜 9:00 UTC（日本時間18:00）
+    - cron: '0 9 * * 5'  # 毎週金曜 9:00 UTC（日本時間18:00）
   workflow_dispatch:      # 手動実行も可能
     inputs:
+      backend:
+        description: "API backend"
+        required: false
+        default: "github_models"
+        type: choice
+        options:
+          - github_models
+          - anthropic
+      model:
+        description: "Model override (空欄=バックエンドのデフォルト: anthropic→claude-opus-4-6 / github_models→claude-sonnet-4)"
+        required: false
+        default: ""
       blog_days:
         description: "Number of days to look back (default: 7)"
         required: false
@@ -82,12 +94,21 @@ jobs:
 
           echo "logs_file=/tmp/weekly_logs.txt" >> "$GITHUB_OUTPUT"
 
-      - name: Claude APIで日本語ブログ記事を生成
+      - name: 日本語ブログ記事を生成
         id: generate
         if: steps.collect.outputs.has_files == 'true'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          BACKEND="${{ inputs.backend || 'github_models' }}"
+          if [[ "$BACKEND" == "github_models" ]]; then
+            MODEL="${{ inputs.model || 'claude-sonnet-4' }}"
+          else
+            MODEL="${{ inputs.model || 'claude-opus-4-6' }}"
+          fi
+          echo "backend=$BACKEND / model=$MODEL"
+
           START_DATE="${{ steps.collect.outputs.start_date }}"
           END_DATE="${{ steps.collect.outputs.end_date }}"
           OUTPUT_DATE="${{ steps.collect.outputs.output_date }}"
@@ -132,31 +153,58 @@ jobs:
 
           ${REDACTED_LOGS}"
 
-          RESPONSE=$(curl -s -w "\n%{http_code}" https://api.anthropic.com/v1/messages \
-            -H "x-api-key: $ANTHROPIC_API_KEY" \
-            -H "anthropic-version: 2023-06-01" \
-            -H "content-type: application/json" \
-            -d "$(jq -n \
+          if [[ "$BACKEND" == "github_models" ]]; then
+            REQUEST=$(jq -n \
+              --arg model "$MODEL" \
               --arg system "$SYSTEM_PROMPT" \
               --arg user_content "$USER_CONTENT" \
               '{
-                model: "claude-opus-4-6",
+                model: $model,
+                max_tokens: 4096,
+                messages: [
+                  {"role": "system", "content": $system},
+                  {"role": "user", "content": $user_content}
+                ]
+              }')
+            RESPONSE=$(curl -s -w "\n%{http_code}" \
+              https://models.inference.ai.azure.com/chat/completions \
+              -H "Authorization: Bearer $GITHUB_TOKEN" \
+              -H "content-type: application/json" \
+              -d "$REQUEST")
+            HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+            BODY=$(echo "$RESPONSE" | head -n -1)
+            if [ "$HTTP_CODE" != "200" ]; then
+              echo "APIエラー: HTTP $HTTP_CODE"
+              echo "$BODY"
+              exit 1
+            fi
+            BLOG=$(echo "$BODY" | jq -r '.choices[0].message.content')
+          else
+            REQUEST=$(jq -n \
+              --arg model "$MODEL" \
+              --arg system "$SYSTEM_PROMPT" \
+              --arg user_content "$USER_CONTENT" \
+              '{
+                model: $model,
                 max_tokens: 4096,
                 system: $system,
                 messages: [{"role": "user", "content": $user_content}]
-              }'
-            )")
-
-          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-          BODY=$(echo "$RESPONSE" | head -n -1)
-
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "APIエラー: HTTP $HTTP_CODE"
-            echo "$BODY"
-            exit 1
+              }')
+            RESPONSE=$(curl -s -w "\n%{http_code}" \
+              https://api.anthropic.com/v1/messages \
+              -H "x-api-key: $ANTHROPIC_API_KEY" \
+              -H "anthropic-version: 2023-06-01" \
+              -H "content-type: application/json" \
+              -d "$REQUEST")
+            HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+            BODY=$(echo "$RESPONSE" | head -n -1)
+            if [ "$HTTP_CODE" != "200" ]; then
+              echo "APIエラー: HTTP $HTTP_CODE"
+              echo "$BODY"
+              exit 1
+            fi
+            BLOG=$(echo "$BODY" | jq -r '.content[0].text')
           fi
-
-          BLOG=$(echo "$BODY" | jq -r '.content[0].text')
 
           if [[ -z "$BLOG" || "$BLOG" == "null" ]]; then
             echo "APIレスポンスの取得に失敗しました"
@@ -170,12 +218,21 @@ jobs:
           echo "blog_file=$FILENAME" >> "$GITHUB_OUTPUT"
           echo "生成完了: $FILENAME"
 
-      - name: Claude APIで英語ブログ記事を生成
+      - name: 英語ブログ記事を生成
         id: generate_en
         if: steps.collect.outputs.has_files == 'true'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          BACKEND="${{ inputs.backend || 'github_models' }}"
+          if [[ "$BACKEND" == "github_models" ]]; then
+            MODEL="${{ inputs.model || 'claude-sonnet-4' }}"
+          else
+            MODEL="${{ inputs.model || 'claude-opus-4-6' }}"
+          fi
+          echo "backend=$BACKEND / model=$MODEL"
+
           START_DATE="${{ steps.collect.outputs.start_date }}"
           END_DATE="${{ steps.collect.outputs.end_date }}"
           OUTPUT_DATE="${{ steps.collect.outputs.output_date }}"
@@ -219,31 +276,58 @@ jobs:
 
           ${REDACTED_LOGS}"
 
-          RESPONSE=$(curl -s -w "\n%{http_code}" https://api.anthropic.com/v1/messages \
-            -H "x-api-key: $ANTHROPIC_API_KEY" \
-            -H "anthropic-version: 2023-06-01" \
-            -H "content-type: application/json" \
-            -d "$(jq -n \
+          if [[ "$BACKEND" == "github_models" ]]; then
+            REQUEST=$(jq -n \
+              --arg model "$MODEL" \
               --arg system "$SYSTEM_PROMPT" \
               --arg user_content "$USER_CONTENT" \
               '{
-                model: "claude-opus-4-6",
+                model: $model,
+                max_tokens: 4096,
+                messages: [
+                  {"role": "system", "content": $system},
+                  {"role": "user", "content": $user_content}
+                ]
+              }')
+            RESPONSE=$(curl -s -w "\n%{http_code}" \
+              https://models.inference.ai.azure.com/chat/completions \
+              -H "Authorization: Bearer $GITHUB_TOKEN" \
+              -H "content-type: application/json" \
+              -d "$REQUEST")
+            HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+            BODY=$(echo "$RESPONSE" | head -n -1)
+            if [ "$HTTP_CODE" != "200" ]; then
+              echo "API error: HTTP $HTTP_CODE"
+              echo "$BODY"
+              exit 1
+            fi
+            BLOG_EN=$(echo "$BODY" | jq -r '.choices[0].message.content')
+          else
+            REQUEST=$(jq -n \
+              --arg model "$MODEL" \
+              --arg system "$SYSTEM_PROMPT" \
+              --arg user_content "$USER_CONTENT" \
+              '{
+                model: $model,
                 max_tokens: 4096,
                 system: $system,
                 messages: [{"role": "user", "content": $user_content}]
-              }'
-            )")
-
-          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-          BODY=$(echo "$RESPONSE" | head -n -1)
-
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "API error: HTTP $HTTP_CODE"
-            echo "$BODY"
-            exit 1
+              }')
+            RESPONSE=$(curl -s -w "\n%{http_code}" \
+              https://api.anthropic.com/v1/messages \
+              -H "x-api-key: $ANTHROPIC_API_KEY" \
+              -H "anthropic-version: 2023-06-01" \
+              -H "content-type: application/json" \
+              -d "$REQUEST")
+            HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+            BODY=$(echo "$RESPONSE" | head -n -1)
+            if [ "$HTTP_CODE" != "200" ]; then
+              echo "API error: HTTP $HTTP_CODE"
+              echo "$BODY"
+              exit 1
+            fi
+            BLOG_EN=$(echo "$BODY" | jq -r '.content[0].text')
           fi
-
-          BLOG_EN=$(echo "$BODY" | jq -r '.content[0].text')
 
           if [[ -z "$BLOG_EN" || "$BLOG_EN" == "null" ]]; then
             echo "英語APIレスポンスの取得に失敗しました"

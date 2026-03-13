@@ -14,7 +14,7 @@ on:
           - github_models
           - anthropic
       model:
-        description: "Model override (空欄=バックエンドのデフォルト: anthropic→claude-opus-4-6 / github_models→claude-sonnet-4)"
+        description: "Model override (空欄=バックエンドのデフォルト: anthropic→claude-opus-4-6 / github_models→claude-sonnet-4-6)"
         required: false
         default: ""
       blog_days:
@@ -103,7 +103,7 @@ jobs:
         run: |
           BACKEND="${{ inputs.backend || 'github_models' }}"
           if [[ "$BACKEND" == "github_models" ]]; then
-            MODEL="${{ inputs.model || 'claude-sonnet-4' }}"
+            MODEL="${{ inputs.model || 'claude-sonnet-4-6' }}"
           else
             MODEL="${{ inputs.model || 'claude-opus-4-6' }}"
           fi
@@ -227,7 +227,7 @@ jobs:
         run: |
           BACKEND="${{ inputs.backend || 'github_models' }}"
           if [[ "$BACKEND" == "github_models" ]]; then
-            MODEL="${{ inputs.model || 'claude-sonnet-4' }}"
+            MODEL="${{ inputs.model || 'claude-sonnet-4-6' }}"
           else
             MODEL="${{ inputs.model || 'claude-opus-4-6' }}"
           fi

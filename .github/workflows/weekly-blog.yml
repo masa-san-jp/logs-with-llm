@@ -58,7 +58,7 @@ jobs:
 
           for item in logs/*; do
             item_basename=$(basename "$item")
-            prefix=$(echo "$item_basename" | grep -oP '^^\d{8}' || true)
+            prefix=$(echo "$item_basename" | grep -oP '^\d{8}' || true)
 
             if [[ -z "$prefix" || "$prefix" -lt "$START_DATE" || "$prefix" -gt "$END_DATE" ]]; then
               continue
@@ -141,21 +141,23 @@ jobs:
             [[ -z "$f" ]] && continue
             echo "Summarizing: $f"
 
+            safe_name=$(echo "$f" | sed -E 's#[^A-Za-z0-9._-]+#_#g')
+
             # マスキング（ファイル単位）
             sed -E '
-              s/(api[_-]?key\s*[:=]\s*)[A-Za-z0-9._-]+/\1[REDACTED]/gi;
-              s/(token\s*[:=]\s*)[A-Za-z0-9._-]+/\1[REDACTED]/gi;
-              s/(password\s*[:=]\s*)[^[:space:]]+/\1[REDACTED]/gi;
-              s/(authorization\s*[:=]\s*Bearer\s+)[^[:space:]]+/\1[REDACTED]/gi;
-              s/[A-Za-z0-9+\/=_{32,}/[REDACTED]/g
-            ' "$f" > /tmp/summaries/current_redacted.txt
+              s/(api[_-]?key[[:space:]]*[:=][[:space:]]*)[A-Za-z0-9._-]+/\1[REDACTED]/gi;
+              s/(token[[:space:]]*[:=][[:space:]]*)[A-Za-z0-9._-]+/\1[REDACTED]/gi;
+              s/(password[[:space:]]*[:=][[:space:]]*)[^[:space:]]+/\1[REDACTED]/gi;
+              s/(authorization[[:space:]]*:[[:space:]]*Bearer[[:space:]]+)[^[:space:]]+/\1[REDACTED]/gi;
+              s/[A-Za-z0-9+\/]{32,}={0,2}/[REDACTED]/g
+            ' "$f" > "/tmp/summaries/${safe_name}.redacted.txt"
 
             # ユーザーコンテンツをファイル化（巨大引数を避ける）
             {
               echo "対象期間: ${START_DATE}〜${END_DATE}"
               echo "ファイル: $f"
               echo
-              cat /tmp/summaries/current_redacted.txt
+              cat "/tmp/summaries/${safe_name}.redacted.txt"
             } > /tmp/summaries/current_user.txt
 
             printf '%s' "$SYSTEM_PROMPT" > /tmp/summaries/system_prompt.txt
@@ -182,7 +184,7 @@ jobs:
               HTTP_CODE=$(echo "$RESPONSE" | tail -1)
               BODY=$(echo "$RESPONSE" | head -n -1)
               if [ "$HTTP_CODE" != "200" ]; then
-                echo "APIエラー: HTTP $HTTP_CODE"
+                echo "APIエラー: HTTP $HTTP_CODE ($f)"
                 echo "$BODY"
                 exit 1
               fi
@@ -208,7 +210,7 @@ jobs:
               HTTP_CODE=$(echo "$RESPONSE" | tail -1)
               BODY=$(echo "$RESPONSE" | head -n -1)
               if [ "$HTTP_CODE" != "200" ]; then
-                echo "APIエラー: HTTP $HTTP_CODE"
+                echo "APIエラー: HTTP $HTTP_CODE ($f)"
                 echo "$BODY"
                 exit 1
               fi
@@ -216,12 +218,11 @@ jobs:
             fi
 
             if [[ -z "$SUMMARY" || "$SUMMARY" == "null" ]]; then
-              echo "要約の取得に失敗しました"
+              echo "要約の取得に失敗しました: $f"
               echo "$BODY"
               exit 1
             fi
 
-            safe_name=$(echo "$f" | sed -E 's#[^A-Za-z0-9._-]+#_#g')
             out="/tmp/summaries/${safe_name}.summary.ja.md"
             printf '%s\n' "$SUMMARY" > "$out"
             echo "$out" >> /tmp/summaries/index.txt
@@ -345,7 +346,7 @@ jobs:
           echo "merged=/tmp/summaries/weekly_merged_ja.md" >> "$GITHUB_OUTPUT"
 
       - name: 日本語ブログ記事を生成（統合要約から）
-        id: generate
+        id: generate_ja
         if: steps.collect.outputs.has_files == 'true'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -446,16 +447,24 @@ jobs:
             HTTP_CODE=$(echo "$RESPONSE" | tail -1)
             BODY=$(echo "$RESPONSE" | head -n -1)
             if [ "$HTTP_CODE" != "200" ]; then
-              echo "APIレスポンスの取得に失敗しました"
+              echo "APIエラー: HTTP $HTTP_CODE"
               echo "$BODY"
               exit 1
             fi
+            BLOG=$(echo "$BODY" | jq -r '.content[0].text')
+          fi
 
-            printf '%s\n' "$SUMMARY" > "$out"
-            echo "${out}" >> /tmp/summaries/index.txt
-          done
+          if [[ -z "$BLOG" || "$BLOG" == "null" ]]; then
+            echo "ブログ記事の取得に失敗しました"
+            echo "$BODY"
+            exit 1
+          fi
 
-          echo "index=/tmp/summaries/index.txt" >> "$GITHUB_OUTPUT"
+          mkdir -p blog
+          FILENAME="blog/${OUTPUT_DATE}-weekly.md"
+          printf '%s\n' "$BLOG" > "$FILENAME"
+          echo "blog_file=$FILENAME" >> "$GITHUB_OUTPUT"
+          echo "日本語版生成完了: $FILENAME"
 
       - name: 英語ブログ記事を生成（統合要約から）
         id: generate_en
@@ -490,7 +499,7 @@ jobs:
           1. **Intro** - What masa was thinking about this week, what caught his attention
           2. **Highlight of the week** - 1–2 particularly memorable discussions
           3. **Insights & learnings** - What he got out of the discussions. No fake enlightenment.
-          4. **Summary + commentary per discussion** - 1–2 paragraphs summarizing each log, ending with a dry, black-humor remark from masa'"'s perspective.
+          4. **Summary + commentary per discussion** - 1–2 paragraphs summarizing each log, ending with a dry, black-humor remark from masa'"'"'s perspective.
           5. **What to try next week** - Next actions or questions
 
           ## Writing style rules
@@ -538,13 +547,49 @@ jobs:
               echo "$BODY"
               exit 1
             fi
+            BLOG_EN=$(echo "$BODY" | jq -r '.choices[0].message.content')
+          else
+            jq -n \
+              --arg model "$MODEL" \
+              --rawfile system /tmp/summaries/blog_system_en.txt \
+              --rawfile user_content /tmp/summaries/blog_user_en.txt \
+              '{
+                model: $model,
+                max_tokens: 4096,
+                system: $system,
+                messages: [{"role": "user", "content": $user_content}]
+              }' > /tmp/summaries/blog_request_en.json
 
-            printf '%s\n' "$BLOG_EN" > "$FILENAME_EN"
-            echo "blog_file_en=$FILENAME_EN" >> "$GITHUB_OUTPUT"
-            echo "英語版生成完了: $FILENAME_EN"
+            RESPONSE=$(curl -s -w "\n%{http_code}" \
+              https://api.anthropic.com/v1/messages \
+              -H "x-api-key: $ANTHROPIC_API_KEY" \
+              -H "anthropic-version: 2023-06-01" \
+              -H "content-type: application/json" \
+              -d @/tmp/summaries/blog_request_en.json)
+            HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+            BODY=$(echo "$RESPONSE" | head -n -1)
+            if [ "$HTTP_CODE" != "200" ]; then
+              echo "API error: HTTP $HTTP_CODE"
+              echo "$BODY"
+              exit 1
+            fi
+            BLOG_EN=$(echo "$BODY" | jq -r '.content[0].text')
+          fi
+
+          if [[ -z "$BLOG_EN" || "$BLOG_EN" == "null" ]]; then
+            echo "English blog post retrieval failed"
+            echo "$BODY"
+            exit 1
+          fi
+
+          mkdir -p blog
+          FILENAME_EN="blog/${OUTPUT_DATE}-weekly-en.md"
+          printf '%s\n' "$BLOG_EN" > "$FILENAME_EN"
+          echo "blog_file_en=$FILENAME_EN" >> "$GITHUB_OUTPUT"
+          echo "英語版生成完了: $FILENAME_EN"
 
       - name: 生成したブログをリポジトリにコミット
-        if: steps.collect.outputs.has_files == 'true' && (steps.generate.outcome == 'success' || steps.generate_en.outcome == 'success')
+        if: steps.collect.outputs.has_files == 'true' && (steps.generate_ja.outcome == 'success' || steps.generate_en.outcome == 'success')
         run: |
           set -euo pipefail
 
@@ -557,4 +602,3 @@ jobs:
           fi
           git commit -m "📝 週次ブログ自動生成 (${{ steps.collect.outputs.start_date }}〜${{ steps.collect.outputs.end_date }})"
           git push
-

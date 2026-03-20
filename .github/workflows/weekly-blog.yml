@@ -47,6 +47,8 @@ jobs:
       - name: 対象ログファイルを収集
         id: collect
         run: |
+          set -euo pipefail
+
           DAYS="${{ inputs.blog_days || '7' }}"
           START_DATE=$(date -d "${DAYS} days ago" +%Y%m%d)
           END_DATE=$(date +%Y%m%d)
@@ -56,7 +58,7 @@ jobs:
 
           for item in logs/*; do
             item_basename=$(basename "$item")
-            prefix=$(echo "$item_basename" | grep -oP '^\d{8}' || true)
+            prefix=$(echo "$item_basename" | grep -oP '^^\d{8}' || true)
 
             if [[ -z "$prefix" || "$prefix" -lt "$START_DATE" || "$prefix" -gt "$END_DATE" ]]; then
               continue
@@ -90,22 +92,267 @@ jobs:
           fi
           echo "output_date=$OUTPUT_DATE" >> "$GITHUB_OUTPUT"
 
-          # ログ内容をファイルに書き出し
-          > /tmp/weekly_logs.txt
-          for f in "${TARGET_FILES[@]}"; do
-            printf '\n\n---\n### ファイル: %s\n\n' "$f" >> /tmp/weekly_logs.txt
-            cat "$f" >> /tmp/weekly_logs.txt
-          done
+          # 週次対象ファイル一覧を保存
+          printf '%s\n' "${TARGET_FILES[@]}" > /tmp/weekly_files.txt
+          echo "files_list=/tmp/weekly_files.txt" >> "$GITHUB_OUTPUT"
 
-          echo "logs_file=/tmp/weekly_logs.txt" >> "$GITHUB_OUTPUT"
+      - name: ログファイル単位で要約（日本語）
+        id: summarize_ja
+        if: steps.collect.outputs.has_files == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
 
-      - name: 日本語ブログ記事を生成
+          BACKEND="${{ inputs.backend || 'github_models' }}"
+          if [[ "$BACKEND" == "github_models" ]]; then
+            MODEL="${{ inputs.model || 'claude-sonnet-4' }}"
+          else
+            MODEL="${{ inputs.model || 'claude-opus-4-6' }}"
+          fi
+          echo "backend=$BACKEND / model=$MODEL"
+
+          START_DATE="${{ steps.collect.outputs.start_date }}"
+          END_DATE="${{ steps.collect.outputs.end_date }}"
+
+          mkdir -p /tmp/summaries
+          : > /tmp/summaries/index.txt
+
+          SYSTEM_PROMPT='あなたは要約者です。以下のログ（1ファイル分）を、週次ブログ生成用の素材として要約してください。
+
+          ## 目的
+          - 週次ブログで取り上げる論点と学びを抽出する
+          - 冗長なやり取りは圧縮する
+
+          ## 出力形式（厳守）
+          - 見出し: 1行でテーマ
+          - 要点: 箇条書き5〜10個
+          - 気づき: 2〜5個
+          - 引用候補: ログから短い引用を最大3つ（各200字以内）
+          - 注意/未解決: 1〜3個
+
+          ## 制約
+          - 秘密情報（APIキー・トークン・パスワード等）は含めない。見つけたら [REDACTED] と書く
+          - 日本語で書く
+          '
+
+          while IFS= read -r f; do
+            [[ -z "$f" ]] && continue
+            echo "Summarizing: $f"
+
+            # マスキング（ファイル単位）
+            sed -E '
+              s/(api[_-]?key\s*[:=]\s*)[A-Za-z0-9._-]+/\1[REDACTED]/gi;
+              s/(token\s*[:=]\s*)[A-Za-z0-9._-]+/\1[REDACTED]/gi;
+              s/(password\s*[:=]\s*)[^[:space:]]+/\1[REDACTED]/gi;
+              s/(authorization\s*[:=]\s*Bearer\s+)[^[:space:]]+/\1[REDACTED]/gi;
+              s/[A-Za-z0-9+\/=_{32,}/[REDACTED]/g
+            ' "$f" > /tmp/summaries/current_redacted.txt
+
+            # ユーザーコンテンツをファイル化（巨大引数を避ける）
+            {
+              echo "対象期間: ${START_DATE}〜${END_DATE}"
+              echo "ファイル: $f"
+              echo
+              cat /tmp/summaries/current_redacted.txt
+            } > /tmp/summaries/current_user.txt
+
+            printf '%s' "$SYSTEM_PROMPT" > /tmp/summaries/system_prompt.txt
+
+            if [[ "$BACKEND" == "github_models" ]]; then
+              jq -n \
+                --arg model "$MODEL" \
+                --rawfile system /tmp/summaries/system_prompt.txt \
+                --rawfile user_content /tmp/summaries/current_user.txt \
+                '{
+                  model: $model,
+                  max_tokens: 1200,
+                  messages: [
+                    {"role": "system", "content": $system},
+                    {"role": "user", "content": $user_content}
+                  ]
+                }' > /tmp/summaries/request.json
+
+              RESPONSE=$(curl -s -w "\n%{http_code}" \
+                https://models.inference.ai.azure.com/chat/completions \
+                -H "Authorization: Bearer $GITHUB_TOKEN" \
+                -H "content-type: application/json" \
+                -d @/tmp/summaries/request.json)
+              HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+              BODY=$(echo "$RESPONSE" | head -n -1)
+              if [ "$HTTP_CODE" != "200" ]; then
+                echo "APIエラー: HTTP $HTTP_CODE"
+                echo "$BODY"
+                exit 1
+              fi
+              SUMMARY=$(echo "$BODY" | jq -r '.choices[0].message.content')
+            else
+              jq -n \
+                --arg model "$MODEL" \
+                --rawfile system /tmp/summaries/system_prompt.txt \
+                --rawfile user_content /tmp/summaries/current_user.txt \
+                '{
+                  model: $model,
+                  max_tokens: 1200,
+                  system: $system,
+                  messages: [{"role": "user", "content": $user_content}]
+                }' > /tmp/summaries/request.json
+
+              RESPONSE=$(curl -s -w "\n%{http_code}" \
+                https://api.anthropic.com/v1/messages \
+                -H "x-api-key: $ANTHROPIC_API_KEY" \
+                -H "anthropic-version: 2023-06-01" \
+                -H "content-type: application/json" \
+                -d @/tmp/summaries/request.json)
+              HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+              BODY=$(echo "$RESPONSE" | head -n -1)
+              if [ "$HTTP_CODE" != "200" ]; then
+                echo "APIエラー: HTTP $HTTP_CODE"
+                echo "$BODY"
+                exit 1
+              fi
+              SUMMARY=$(echo "$BODY" | jq -r '.content[0].text')
+            fi
+
+            if [[ -z "$SUMMARY" || "$SUMMARY" == "null" ]]; then
+              echo "要約の取得に失敗しました"
+              echo "$BODY"
+              exit 1
+            fi
+
+            safe_name=$(echo "$f" | sed -E 's#[^A-Za-z0-9._-]+#_#g')
+            out="/tmp/summaries/${safe_name}.summary.ja.md"
+            printf '%s\n' "$SUMMARY" > "$out"
+            echo "$out" >> /tmp/summaries/index.txt
+          done < "${{ steps.collect.outputs.files_list }}"
+
+          echo "index=/tmp/summaries/index.txt" >> "$GITHUB_OUTPUT"
+
+      - name: 週次統合要約（日本語）
+        id: merge_ja
+        if: steps.collect.outputs.has_files == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          BACKEND="${{ inputs.backend || 'github_models' }}"
+          if [[ "$BACKEND" == "github_models" ]]; then
+            MODEL="${{ inputs.model || 'claude-sonnet-4' }}"
+          else
+            MODEL="${{ inputs.model || 'claude-opus-4-6' }}"
+          fi
+
+          START_DATE="${{ steps.collect.outputs.start_date }}"
+          END_DATE="${{ steps.collect.outputs.end_date }}"
+
+          SYSTEM_PROMPT='あなたは編集者です。複数の「ログ要約」を統合して、週次ブログ生成用の統合サマリを作ってください。
+
+          ## 出力形式（厳守）
+          - 今週の中心テーマ: 1〜3個
+          - ハイライト候補: 2〜4個（なぜ重要かも）
+          - 各ログの短い要約: 各ログにつき3〜6行
+          - 反省/矛盾/未解決: 3〜8個
+          - 来週の問い: 3〜8個
+
+          ## 制約
+          - 断定しすぎない
+          - 美文にしない（素材としての要約）
+          - 秘密情報は含めない
+          '
+
+          printf '%s' "$SYSTEM_PROMPT" > /tmp/summaries/merge_system.txt
+
+          {
+            echo "対象期間: ${START_DATE}〜${END_DATE}"
+            echo
+            echo "以下は各ログの要約です。"
+            echo
+            while IFS= read -r p; do
+              [[ -z "$p" ]] && continue
+              echo "---"
+              echo "要約ファイル: $p"
+              echo
+              cat "$p"
+              echo
+            done < /tmp/summaries/index.txt
+          } > /tmp/summaries/merge_user.txt
+
+          if [[ "$BACKEND" == "github_models" ]]; then
+            jq -n \
+              --arg model "$MODEL" \
+              --rawfile system /tmp/summaries/merge_system.txt \
+              --rawfile user_content /tmp/summaries/merge_user.txt \
+              '{
+                model: $model,
+                max_tokens: 1600,
+                messages: [
+                  {"role": "system", "content": $system},
+                  {"role": "user", "content": $user_content}
+                ]
+              }' > /tmp/summaries/merge_request.json
+
+            RESPONSE=$(curl -s -w "\n%{http_code}" \
+              https://models.inference.ai.azure.com/chat/completions \
+              -H "Authorization: Bearer $GITHUB_TOKEN" \
+              -H "content-type: application/json" \
+              -d @/tmp/summaries/merge_request.json)
+            HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+            BODY=$(echo "$RESPONSE" | head -n -1)
+            if [ "$HTTP_CODE" != "200" ]; then
+              echo "APIエラー: HTTP $HTTP_CODE"
+              echo "$BODY"
+              exit 1
+            fi
+            MERGED=$(echo "$BODY" | jq -r '.choices[0].message.content')
+          else
+            jq -n \
+              --arg model "$MODEL" \
+              --rawfile system /tmp/summaries/merge_system.txt \
+              --rawfile user_content /tmp/summaries/merge_user.txt \
+              '{
+                model: $model,
+                max_tokens: 1600,
+                system: $system,
+                messages: [{"role": "user", "content": $user_content}]
+              }' > /tmp/summaries/merge_request.json
+
+            RESPONSE=$(curl -s -w "\n%{http_code}" \
+              https://api.anthropic.com/v1/messages \
+              -H "x-api-key: $ANTHROPIC_API_KEY" \
+              -H "anthropic-version: 2023-06-01" \
+              -H "content-type: application/json" \
+              -d @/tmp/summaries/merge_request.json)
+            HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+            BODY=$(echo "$RESPONSE" | head -n -1)
+            if [ "$HTTP_CODE" != "200" ]; then
+              echo "APIエラー: HTTP $HTTP_CODE"
+              echo "$BODY"
+              exit 1
+            fi
+            MERGED=$(echo "$BODY" | jq -r '.content[0].text')
+          fi
+
+          if [[ -z "$MERGED" || "$MERGED" == "null" ]]; then
+            echo "統合要約の取得に失敗しました"
+            echo "$BODY"
+            exit 1
+          fi
+
+          printf '%s\n' "$MERGED" > /tmp/summaries/weekly_merged_ja.md
+          echo "merged=/tmp/summaries/weekly_merged_ja.md" >> "$GITHUB_OUTPUT"
+
+      - name: 日本語ブログ記事を生成（統合要約から）
         id: generate
         if: steps.collect.outputs.has_files == 'true'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
+
           BACKEND="${{ inputs.backend || 'github_models' }}"
           if [[ "$BACKEND" == "github_models" ]]; then
             MODEL="${{ inputs.model || 'claude-sonnet-4' }}"
@@ -143,25 +390,19 @@ jobs:
           タイトルも考えてください（キャッチーだけど煽りすぎないやつ）。
           出力はmarkdown形式で、先頭行をタイトル（# タイトル）にしてください。'
 
-          # NOTE: ログには秘密情報（APIキー・トークン・パスワード等）を含めないこと。
-          # 下記で代表的なパターンをベストエフォートでマスキングしてから外部APIに送信する。
-          REDACTED_LOGS="$(sed -E '
-            s/(api[_-]?key\s*[:=]\s*)[A-Za-z0-9._-]+/\1[REDACTED]/gi;
-            s/(token\s*[:=]\s*)[A-Za-z0-9._-]+/\1[REDACTED]/gi;
-            s/(password\s*[:=]\s*)[^[:space:]]+/\1[REDACTED]/gi;
-            s/(authorization\s*[:=]\s*Bearer\s+)[^[:space:]]+/\1[REDACTED]/gi;
-            s/[A-Za-z0-9+\/=_-]{32,}/[REDACTED]/g
-          ' /tmp/weekly_logs.txt)"
+          printf '%s' "$SYSTEM_PROMPT" > /tmp/summaries/blog_system_ja.txt
 
-          USER_CONTENT="以下は今週（${START_DATE}〜${END_DATE}）のLLMとの議論ログです：
-
-          ${REDACTED_LOGS}"
+          {
+            echo "以下は今週（${START_DATE}〜${END_DATE}）のログ要約と統合サマリです："
+            echo
+            cat /tmp/summaries/weekly_merged_ja.md
+          } > /tmp/summaries/blog_user_ja.txt
 
           if [[ "$BACKEND" == "github_models" ]]; then
-            REQUEST=$(jq -n \
+            jq -n \
               --arg model "$MODEL" \
-              --arg system "$SYSTEM_PROMPT" \
-              --arg user_content "$USER_CONTENT" \
+              --rawfile system /tmp/summaries/blog_system_ja.txt \
+              --rawfile user_content /tmp/summaries/blog_user_ja.txt \
               '{
                 model: $model,
                 max_tokens: 4096,
@@ -169,12 +410,13 @@ jobs:
                   {"role": "system", "content": $system},
                   {"role": "user", "content": $user_content}
                 ]
-              }')
+              }' > /tmp/summaries/blog_request_ja.json
+
             RESPONSE=$(curl -s -w "\n%{http_code}" \
               https://models.inference.ai.azure.com/chat/completions \
               -H "Authorization: Bearer $GITHUB_TOKEN" \
               -H "content-type: application/json" \
-              -d "$REQUEST")
+              -d @/tmp/summaries/blog_request_ja.json)
             HTTP_CODE=$(echo "$RESPONSE" | tail -1)
             BODY=$(echo "$RESPONSE" | head -n -1)
             if [ "$HTTP_CODE" != "200" ]; then
@@ -184,51 +426,46 @@ jobs:
             fi
             BLOG=$(echo "$BODY" | jq -r '.choices[0].message.content')
           else
-            REQUEST=$(jq -n \
+            jq -n \
               --arg model "$MODEL" \
-              --arg system "$SYSTEM_PROMPT" \
-              --arg user_content "$USER_CONTENT" \
+              --rawfile system /tmp/summaries/blog_system_ja.txt \
+              --rawfile user_content /tmp/summaries/blog_user_ja.txt \
               '{
                 model: $model,
                 max_tokens: 4096,
                 system: $system,
                 messages: [{"role": "user", "content": $user_content}]
-              }')
+              }' > /tmp/summaries/blog_request_ja.json
+
             RESPONSE=$(curl -s -w "\n%{http_code}" \
               https://api.anthropic.com/v1/messages \
               -H "x-api-key: $ANTHROPIC_API_KEY" \
               -H "anthropic-version: 2023-06-01" \
               -H "content-type: application/json" \
-              -d "$REQUEST")
+              -d @/tmp/summaries/blog_request_ja.json)
             HTTP_CODE=$(echo "$RESPONSE" | tail -1)
             BODY=$(echo "$RESPONSE" | head -n -1)
             if [ "$HTTP_CODE" != "200" ]; then
-              echo "APIエラー: HTTP $HTTP_CODE"
+              echo "APIレスポンスの取得に失敗しました"
               echo "$BODY"
               exit 1
             fi
-            BLOG=$(echo "$BODY" | jq -r '.content[0].text')
-          fi
 
-          if [[ -z "$BLOG" || "$BLOG" == "null" ]]; then
-            echo "APIレスポンスの取得に失敗しました"
-            echo "$BODY"
-            exit 1
-          fi
+            printf '%s\n' "$SUMMARY" > "$out"
+            echo "${out}" >> /tmp/summaries/index.txt
+          done
 
-          FILENAME="blog/${OUTPUT_DATE}-weekly.md"
-          mkdir -p blog
-          printf '%s\n' "$BLOG" > "$FILENAME"
-          echo "blog_file=$FILENAME" >> "$GITHUB_OUTPUT"
-          echo "生成完了: $FILENAME"
+          echo "index=/tmp/summaries/index.txt" >> "$GITHUB_OUTPUT"
 
-      - name: 英語ブログ記事を生成
+      - name: 英語ブログ記事を生成（統合要約から）
         id: generate_en
         if: steps.collect.outputs.has_files == 'true'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
+
           BACKEND="${{ inputs.backend || 'github_models' }}"
           if [[ "$BACKEND" == "github_models" ]]; then
             MODEL="${{ inputs.model || 'claude-sonnet-4' }}"
@@ -253,7 +490,7 @@ jobs:
           1. **Intro** - What masa was thinking about this week, what caught his attention
           2. **Highlight of the week** - 1–2 particularly memorable discussions
           3. **Insights & learnings** - What he got out of the discussions. No fake enlightenment.
-          4. **Summary + commentary per discussion** - 1–2 paragraphs summarizing each log, ending with a dry, black-humor remark from masa'"'"'s perspective. e.g. "Spent 30 minutes just to arrive back at square one." or "Turns out I was just getting manipulated by the AI the whole time."
+          4. **Summary + commentary per discussion** - 1–2 paragraphs summarizing each log, ending with a dry, black-humor remark from masa'"'s perspective.
           5. **What to try next week** - Next actions or questions
 
           ## Writing style rules
@@ -267,24 +504,19 @@ jobs:
           Also come up with a title (catchy but not clickbaity).
           Output in markdown format, with the title as the first line (# Title).'
 
-          # Apply same masking as Japanese version before sending to API
-          REDACTED_LOGS="$(sed -E '
-            s/(api[_-]?key\s*[:=]\s*)[A-Za-z0-9._-]+/\1[REDACTED]/gi;
-            s/(token\s*[:=]\s*)[A-Za-z0-9._-]+/\1[REDACTED]/gi;
-            s/(password\s*[:=]\s*)[^[:space:]]+/\1[REDACTED]/gi;
-            s/(authorization\s*[:=]\s*Bearer\s+)[^[:space:]]+/\1[REDACTED]/gi;
-            s/[A-Za-z0-9+\/=_-]{32,}/[REDACTED]/g
-          ' /tmp/weekly_logs.txt)"
+          printf '%s' "$SYSTEM_PROMPT" > /tmp/summaries/blog_system_en.txt
 
-          USER_CONTENT="Below are this week's (${START_DATE}–${END_DATE}) LLM discussion logs:
-
-          ${REDACTED_LOGS}"
+          {
+            echo "以下は今週（${START_DATE}〜${END_DATE}）のログ要約と統合サマリです："
+            echo
+            cat /tmp/summaries/weekly_merged_ja.md
+          } > /tmp/summaries/blog_user_en.txt
 
           if [[ "$BACKEND" == "github_models" ]]; then
-            REQUEST=$(jq -n \
+            jq -n \
               --arg model "$MODEL" \
-              --arg system "$SYSTEM_PROMPT" \
-              --arg user_content "$USER_CONTENT" \
+              --rawfile system /tmp/summaries/blog_system_en.txt \
+              --rawfile user_content /tmp/summaries/blog_user_en.txt \
               '{
                 model: $model,
                 max_tokens: 4096,
@@ -292,12 +524,13 @@ jobs:
                   {"role": "system", "content": $system},
                   {"role": "user", "content": $user_content}
                 ]
-              }')
+              }' > /tmp/summaries/blog_request_en.json
+
             RESPONSE=$(curl -s -w "\n%{http_code}" \
               https://models.inference.ai.azure.com/chat/completions \
               -H "Authorization: Bearer $GITHUB_TOKEN" \
               -H "content-type: application/json" \
-              -d "$REQUEST")
+              -d @/tmp/summaries/blog_request_en.json)
             HTTP_CODE=$(echo "$RESPONSE" | tail -1)
             BODY=$(echo "$RESPONSE" | head -n -1)
             if [ "$HTTP_CODE" != "200" ]; then
@@ -305,49 +538,16 @@ jobs:
               echo "$BODY"
               exit 1
             fi
-            BLOG_EN=$(echo "$BODY" | jq -r '.choices[0].message.content')
-          else
-            REQUEST=$(jq -n \
-              --arg model "$MODEL" \
-              --arg system "$SYSTEM_PROMPT" \
-              --arg user_content "$USER_CONTENT" \
-              '{
-                model: $model,
-                max_tokens: 4096,
-                system: $system,
-                messages: [{"role": "user", "content": $user_content}]
-              }')
-            RESPONSE=$(curl -s -w "\n%{http_code}" \
-              https://api.anthropic.com/v1/messages \
-              -H "x-api-key: $ANTHROPIC_API_KEY" \
-              -H "anthropic-version: 2023-06-01" \
-              -H "content-type: application/json" \
-              -d "$REQUEST")
-            HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-            BODY=$(echo "$RESPONSE" | head -n -1)
-            if [ "$HTTP_CODE" != "200" ]; then
-              echo "API error: HTTP $HTTP_CODE"
-              echo "$BODY"
-              exit 1
-            fi
-            BLOG_EN=$(echo "$BODY" | jq -r '.content[0].text')
-          fi
 
-          if [[ -z "$BLOG_EN" || "$BLOG_EN" == "null" ]]; then
-            echo "英語APIレスポンスの取得に失敗しました"
-            echo "$BODY"
-            exit 1
-          fi
-
-          FILENAME_EN="blog/${OUTPUT_DATE}-weekly-en.md"
-          mkdir -p blog
-          printf '%s\n' "$BLOG_EN" > "$FILENAME_EN"
-          echo "blog_file_en=$FILENAME_EN" >> "$GITHUB_OUTPUT"
-          echo "英語版生成完了: $FILENAME_EN"
+            printf '%s\n' "$BLOG_EN" > "$FILENAME_EN"
+            echo "blog_file_en=$FILENAME_EN" >> "$GITHUB_OUTPUT"
+            echo "英語版生成完了: $FILENAME_EN"
 
       - name: 生成したブログをリポジトリにコミット
         if: steps.collect.outputs.has_files == 'true' && (steps.generate.outcome == 'success' || steps.generate_en.outcome == 'success')
         run: |
+          set -euo pipefail
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add blog/
@@ -357,3 +557,4 @@ jobs:
           fi
           git commit -m "📝 週次ブログ自動生成 (${{ steps.collect.outputs.start_date }}〜${{ steps.collect.outputs.end_date }})"
           git push
+

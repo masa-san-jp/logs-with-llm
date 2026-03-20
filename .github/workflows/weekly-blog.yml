@@ -34,10 +34,15 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write  # git push に必要
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       - name: リポジトリをチェックアウト
         uses: actions/checkout@v4
+
+      - name: 依存ツールのインストール
+        run: sudo apt-get update -y && sudo apt-get install -y jq curl
 
       - name: 対象ログファイルを収集
         id: collect

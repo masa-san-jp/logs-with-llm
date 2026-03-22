@@ -86,3 +86,17 @@ To change the schedule, edit `.github/workflows/weekly-blog.yml`.
 pip install pytest
 pytest scripts/tests/
 ```
+
+## Weekly Documentation Goal Automation
+
+A GitHub Actions workflow (`.github/workflows/weekly-doc-goal-issue.yml`) runs every
+week and analyzes the repository documentation as a whole.
+
+It builds an inventory from `README.md`, `prompts/`, `blog/`, and `logs/`, asks an
+LLM to identify the most original and challenging next goal, and then opens a
+GitHub issue draft as a regular issue.
+
+### Manual workflow dispatch
+
+Go to **Actions → Weekly Documentation Goal Issue → Run workflow** in the GitHub UI.
+You can override the backend, model, and `issue_date` before running.

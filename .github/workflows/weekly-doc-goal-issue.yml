@@ -1,0 +1,180 @@
+name: Weekly Documentation Goal Issue
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'  # 毎週月曜 9:00 UTC（日本時間18:00）
+  workflow_dispatch:
+    inputs:
+      backend:
+        description: "API backend"
+        required: false
+        default: "github_models"
+        type: choice
+        options:
+          - github_models
+          - anthropic
+      model:
+        description: "Model override (空欄=バックエンドのデフォルト)"
+        required: false
+        default: ""
+      issue_date:
+        description: "Override issue date (YYYY-MM-DD, default: today UTC)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  create-weekly-goal-issue:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+    steps:
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
+
+      - name: 依存ツールのインストール
+        run: sudo apt-get update -y && sudo apt-get install -y jq curl
+
+      - name: issue 用のドキュメント分析プロンプトを生成
+        env:
+          ISSUE_DATE: ${{ inputs.issue_date }}
+        run: |
+          set -euo pipefail
+          python scripts/generate_weekly_goal_issue.py > /tmp/weekly_goal_issue_prompt.txt
+          wc -c /tmp/weekly_goal_issue_prompt.txt
+
+      - name: LLM で issue 草案を生成
+        id: draft
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          BACKEND="${{ inputs.backend || 'github_models' }}"
+          if [[ "$BACKEND" == "github_models" ]]; then
+            MODEL="${{ inputs.model || 'claude-sonnet-4' }}"
+          else
+            MODEL="${{ inputs.model || 'claude-opus-4-6' }}"
+          fi
+          echo "backend=$BACKEND / model=$MODEL"
+
+          SYSTEM_PROMPT='あなたは GitHub Issue の起票担当者です。
+          レポジトリのドキュメント全体を俯瞰したうえで、次に取り組むべき独創的でチャレンジングな目標を 1 件だけ提案してください。
+          出力形式はユーザープロンプトに厳密に従ってください。'
+
+          printf '%s' "$SYSTEM_PROMPT" > /tmp/weekly_goal_issue_system.txt
+
+          if [[ "$BACKEND" == "github_models" ]]; then
+            jq -n \
+              --arg model "$MODEL" \
+              --rawfile system /tmp/weekly_goal_issue_system.txt \
+              --rawfile user_content /tmp/weekly_goal_issue_prompt.txt \
+              '{
+                model: $model,
+                max_tokens: 1800,
+                messages: [
+                  {"role": "system", "content": $system},
+                  {"role": "user", "content": $user_content}
+                ]
+              }' > /tmp/weekly_goal_issue_request.json
+
+            RESPONSE=$(curl -s -w "\n%{http_code}" \
+              https://models.inference.ai.azure.com/chat/completions \
+              -H "Authorization: Bearer $GITHUB_TOKEN" \
+              -H "content-type: application/json" \
+              -d @/tmp/weekly_goal_issue_request.json)
+            HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+            BODY=$(echo "$RESPONSE" | head -n -1)
+            if [[ "$HTTP_CODE" != "200" ]]; then
+              echo "APIエラー: HTTP $HTTP_CODE"
+              echo "$BODY"
+              exit 1
+            fi
+            ISSUE_MD=$(echo "$BODY" | jq -r '.choices[0].message.content')
+          else
+            jq -n \
+              --arg model "$MODEL" \
+              --rawfile system /tmp/weekly_goal_issue_system.txt \
+              --rawfile user_content /tmp/weekly_goal_issue_prompt.txt \
+              '{
+                model: $model,
+                max_tokens: 1800,
+                system: $system,
+                messages: [{"role": "user", "content": $user_content}]
+              }' > /tmp/weekly_goal_issue_request.json
+
+            RESPONSE=$(curl -s -w "\n%{http_code}" \
+              https://api.anthropic.com/v1/messages \
+              -H "x-api-key: $ANTHROPIC_API_KEY" \
+              -H "anthropic-version: 2023-06-01" \
+              -H "content-type: application/json" \
+              -d @/tmp/weekly_goal_issue_request.json)
+            HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+            BODY=$(echo "$RESPONSE" | head -n -1)
+            if [[ "$HTTP_CODE" != "200" ]]; then
+              echo "APIエラー: HTTP $HTTP_CODE"
+              echo "$BODY"
+              exit 1
+            fi
+            ISSUE_MD=$(echo "$BODY" | jq -r '.content[0].text')
+          fi
+
+          if [[ -z "$ISSUE_MD" || "$ISSUE_MD" == "null" ]]; then
+            echo "Issue 草案の生成に失敗しました"
+            exit 1
+          fi
+
+          printf '%s\n' "$ISSUE_MD" > /tmp/weekly_goal_issue.md
+          TITLE=$(sed -n 's/^# //p' /tmp/weekly_goal_issue.md | head -n 1)
+          if [[ -z "$TITLE" ]]; then
+            echo "Issue title を抽出できませんでした"
+            cat /tmp/weekly_goal_issue.md
+            exit 1
+          fi
+
+          {
+            echo "title<<EOF"
+            echo "$TITLE"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: 既存 issue を確認して新規作成
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          TITLE="${{ steps.draft.outputs.title }}"
+          ISSUES_API="https://api.github.com/repos/${{ github.repository }}/issues"
+          tail -n +2 /tmp/weekly_goal_issue.md > /tmp/weekly_goal_issue_body.md
+
+          EXISTING=$(curl -fsS \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "$ISSUES_API?state=open&per_page=100")
+
+          MATCH_COUNT=$(printf '%s' "$EXISTING" | jq --arg title "$TITLE" '[.[] | select(.pull_request | not) | select(.title == $title)] | length')
+          if [[ "$MATCH_COUNT" != "0" ]]; then
+            echo "同名の open issue が既に存在するため、作成をスキップします: $TITLE"
+            exit 0
+          fi
+
+          jq -n \
+            --arg title "$TITLE" \
+            --rawfile body /tmp/weekly_goal_issue_body.md \
+            '{title: $title, body: $body}' > /tmp/create_weekly_goal_issue.json
+
+          curl -fsS -X POST \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Content-Type: application/json" \
+            "$ISSUES_API" \
+            -d @/tmp/create_weekly_goal_issue.json

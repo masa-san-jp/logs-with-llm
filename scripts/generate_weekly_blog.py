@@ -140,12 +140,46 @@ def _git_diff_log_files() -> list[Path]:
     return files
 
 
+def extract_pdf_text(path: Path) -> str:
+    """Extract plain text from a PDF file using pypdf.
+
+    Returns an empty string if pypdf is not installed or the file cannot be parsed.
+    """
+    try:
+        import pypdf  # type: ignore[import]
+    except ImportError:
+        print(
+            f"[generate_weekly_blog] pypdf not installed; skipping PDF file: {path}",
+            file=sys.stderr,
+        )
+        return ""
+
+    pages: list[str] = []
+    try:
+        with open(path, "rb") as fh:
+            reader = pypdf.PdfReader(fh)
+            for page in reader.pages:
+                text = page.extract_text() or ""
+                pages.append(text)
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"[generate_weekly_blog] Failed to read PDF {path}: {exc}",
+            file=sys.stderr,
+        )
+        return ""
+
+    return "\n".join(pages)
+
+
 def read_log_files(files: list[Path]) -> str:
     """Concatenate log file contents into a single string."""
     parts: list[str] = []
     for f in files:
         try:
-            content = f.read_text(encoding="utf-8", errors="replace")
+            if f.suffix.lower() == ".pdf":
+                content = extract_pdf_text(f)
+            else:
+                content = f.read_text(encoding="utf-8", errors="replace")
             parts.append(f"### {f.relative_to(REPO_ROOT)}\n\n{content}")
         except OSError:
             pass

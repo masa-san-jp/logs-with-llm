@@ -88,3 +88,52 @@ class TestBuildPrompt:
         assert "## Why this goal now" in prompt
         assert "## Source signals from the docs" in prompt
         assert "### README.md" in prompt
+
+
+# ---------------------------------------------------------------------------
+# PDF support
+# ---------------------------------------------------------------------------
+
+class TestPdfSupport:
+    def test_pdf_pattern_in_doc_patterns(self):
+        """logs/**/*.pdf must be in DOC_PATTERNS."""
+        assert "logs/**/*.pdf" in gen.DOC_PATTERNS
+
+    def test_extract_pdf_text_missing_pypdf(self, tmp_path):
+        """extract_pdf_text returns '' when pypdf is not importable."""
+        dummy = tmp_path / "dummy.pdf"
+        dummy.write_bytes(b"%PDF-1.4")
+        with mock.patch.dict("sys.modules", {"pypdf": None}):
+            assert gen.extract_pdf_text(dummy) == ""
+
+    def test_extract_pdf_text_corrupt_file(self, tmp_path):
+        """extract_pdf_text returns '' for unreadable files."""
+        bad = tmp_path / "bad.pdf"
+        bad.write_bytes(b"not a pdf")
+        assert gen.extract_pdf_text(bad) == ""
+
+    def test_build_document_summary_uses_pdf_extractor(self, tmp_path):
+        """build_document_summary delegates to extract_pdf_text for .pdf files."""
+        pdf_path = tmp_path / "logs" / "20260310-topic" / "report.pdf"
+        pdf_path.parent.mkdir(parents=True)
+        pdf_path.write_bytes(b"stub")
+
+        with (
+            mock.patch.object(gen, "REPO_ROOT", tmp_path),
+            mock.patch.object(gen, "extract_pdf_text", return_value="pdf content here") as mock_extract,
+        ):
+            summary = gen.build_document_summary(pdf_path)
+
+        mock_extract.assert_called_once_with(pdf_path)
+        assert "pdf content here" in summary
+
+    def test_list_document_files_includes_pdf(self, tmp_path):
+        """list_document_files collects PDF files from logs/."""
+        pdf_path = tmp_path / "logs" / "20260310-topic" / "report.pdf"
+        pdf_path.parent.mkdir(parents=True)
+        pdf_path.write_bytes(b"stub")
+
+        with mock.patch.object(gen, "REPO_ROOT", tmp_path):
+            files = gen.list_document_files()
+
+        assert any(f.suffix == ".pdf" for f in files)

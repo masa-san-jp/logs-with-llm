@@ -22,7 +22,9 @@ Generated posts are saved under `blog/YYYY-MM-DD.md` and opened as a PR for revi
 
 1. The script (`scripts/generate_weekly_blog.py`) scans `logs/` for directories or
    files whose names contain a `yyyymmdd` date token (e.g. `20260310-grant-agent`).
-2. Files whose date falls within the past 7 days are collected.
+2. Files whose date falls within the past 7 days are collected. Both plain-text files
+   and **PDF files** (`.pdf`) are supported — text is extracted from PDFs automatically
+   using [pypdf](https://pypdf.readthedocs.io/).
 3. If no dated files are found the script falls back to a `git diff` against the
    last processed commit (recorded in `.blog_state.json`).
 4. The previous blog post in `blog/` is read as context so the new post can
@@ -83,7 +85,7 @@ To change the schedule, edit `.github/workflows/weekly-blog.yml`.
 ### Running tests
 
 ```bash
-pip install pytest
+pip install -r requirements.txt pytest
 pytest scripts/tests/
 ```
 
@@ -92,9 +94,9 @@ pytest scripts/tests/
 A GitHub Actions workflow (`.github/workflows/weekly-doc-goal-issue.yml`) runs every
 week and analyzes the repository documentation as a whole.
 
-It builds an inventory from `README.md`, `prompts/`, `blog/`, and `logs/`, asks an
-LLM to identify the most original and challenging next goal, and then opens a
-GitHub issue draft as a regular issue.
+It builds an inventory from `README.md`, `prompts/`, `blog/`, and `logs/` (including
+**PDF files** in `logs/`), asks an LLM to identify the most original and challenging
+next goal, and then opens a GitHub issue draft as a regular issue.
 
 ### Manual workflow dispatch
 

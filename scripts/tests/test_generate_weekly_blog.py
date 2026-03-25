@@ -196,3 +196,54 @@ class TestStateHelpers:
         state_file.write_text("{ not valid json }")
         with mock.patch.object(gen, "STATE_FILE", state_file):
             assert gen._load_state() == {}
+
+# ---------------------------------------------------------------------------
+# PDF text extraction
+# ---------------------------------------------------------------------------
+
+class TestExtractPdfText:
+    def test_returns_empty_string_when_pypdf_missing(self, tmp_path):
+        """extract_pdf_text returns "" gracefully if pypdf is not available."""
+        dummy_pdf = tmp_path / "dummy.pdf"
+        dummy_pdf.write_bytes(b"%PDF-1.4")  # minimal stub – no real pages
+
+        with mock.patch.dict("sys.modules", {"pypdf": None}):
+            result = gen.extract_pdf_text(dummy_pdf)
+        assert result == ""
+
+    def test_returns_empty_string_for_corrupt_pdf(self, tmp_path):
+        """extract_pdf_text returns "" when the file cannot be parsed."""
+        bad_pdf = tmp_path / "bad.pdf"
+        bad_pdf.write_bytes(b"this is not a pdf")
+        result = gen.extract_pdf_text(bad_pdf)
+        assert result == ""
+
+    def test_pdf_included_in_read_log_files(self, tmp_path):
+        """read_log_files calls extract_pdf_text for .pdf files."""
+        pdf_path = tmp_path / "20260310-doc.pdf"
+        pdf_path.write_bytes(b"stub")
+
+        with (
+            mock.patch.object(gen, "REPO_ROOT", tmp_path),
+            mock.patch.object(gen, "extract_pdf_text", return_value="extracted pdf text") as mock_extract,
+        ):
+            result = gen.read_log_files([pdf_path])
+
+        mock_extract.assert_called_once_with(pdf_path)
+        assert "extracted pdf text" in result
+
+    def test_pdf_collected_in_window(self, tmp_path):
+        """collect_log_files picks up .pdf files whose path contains a date in window."""
+        logs_dir = tmp_path / "logs"
+        pdf_path = logs_dir / "20260310-doc" / "report.pdf"
+        pdf_path.parent.mkdir(parents=True)
+        pdf_path.write_bytes(b"stub")
+
+        with (
+            mock.patch.object(gen, "LOGS_DIR", logs_dir),
+            mock.patch.object(gen, "REPO_ROOT", tmp_path),
+        ):
+            files = gen.collect_log_files(date(2026, 3, 7), date(2026, 3, 10))
+
+        assert len(files) == 1
+        assert files[0].suffix == ".pdf"

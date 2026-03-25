@@ -42,6 +42,9 @@ jobs:
       - name: 依存ツールのインストール
         run: sudo apt-get update -y && sudo apt-get install -y jq curl
 
+      - name: Python 依存パッケージのインストール
+        run: pip install -r requirements.txt
+
       - name: issue 用のドキュメント分析プロンプトを生成
         env:
           ISSUE_DATE: ${{ inputs.issue_date }}

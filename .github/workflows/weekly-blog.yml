@@ -44,6 +44,9 @@ jobs:
       - name: 依存ツールのインストール
         run: sudo apt-get update -y && sudo apt-get install -y jq curl
 
+      - name: Python 依存パッケージのインストール
+        run: pip install -r requirements.txt
+
       - name: 対象ログファイルを収集
         id: collect
         run: |

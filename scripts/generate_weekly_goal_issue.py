@@ -21,6 +21,7 @@ DOC_PATTERNS = (
     "README.md",
     "blog/*.md",
     "logs/**/*.md",
+    "logs/**/*.pdf",
     "prompts/**/*.yml",
     "prompts/**/*.yaml",
 )
@@ -53,6 +54,29 @@ def extract_date_from_path(path: str) -> date | None:
 
 def normalize_text(text: str) -> str:
     return " ".join(text.replace("\x00", " ").split())
+
+
+def extract_pdf_text(path: Path) -> str:
+    """Extract plain text from a PDF file using pypdf.
+
+    Returns an empty string if pypdf is not installed or the file cannot be parsed.
+    """
+    try:
+        import pypdf  # type: ignore[import]
+    except ImportError:
+        return ""
+
+    pages: list[str] = []
+    try:
+        with open(path, "rb") as fh:
+            reader = pypdf.PdfReader(fh)
+            for page in reader.pages:
+                text = page.extract_text() or ""
+                pages.append(text)
+    except Exception:  # noqa: BLE001
+        return ""
+
+    return "\n".join(pages)
 
 
 def list_document_files() -> list[Path]:
@@ -102,7 +126,10 @@ def extract_snippet(text: str) -> str:
 def build_document_summary(path: Path) -> str:
     rel = path.relative_to(REPO_ROOT).as_posix()
     try:
-        content = path.read_text(encoding="utf-8", errors="replace")
+        if path.suffix.lower() == ".pdf":
+            content = extract_pdf_text(path)
+        else:
+            content = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         content = ""
 

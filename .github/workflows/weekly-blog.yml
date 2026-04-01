@@ -34,6 +34,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write  # git push に必要
+      models: read
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 

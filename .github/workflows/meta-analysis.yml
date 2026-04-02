@@ -1,0 +1,200 @@
+name: Weekly Meta-Analysis
+
+on:
+  schedule:
+    - cron: '0 9 * * 4'  # 毎週木曜 9:00 UTC（日本時間18:00）
+  workflow_dispatch:      # 手動実行も可能
+    inputs:
+      backend:
+        description: "API backend"
+        required: false
+        default: "github_models"
+        type: choice
+        options:
+          - github_models
+          - anthropic
+      model:
+        description: "Model override (空欄=バックエンドのデフォルト: anthropic→claude-opus-4-6 / github_models→claude-sonnet-4)"
+        required: false
+        default: ""
+      run_date:
+        description: "Override analysis date (YYYY-MM-DD, default: today UTC)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  run-meta-analysis:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      models: read
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+    steps:
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
+
+      - name: 依存ツールのインストール
+        run: sudo apt-get update -y && sudo apt-get install -y jq curl
+
+      - name: Python 依存パッケージのインストール
+        run: pip install -r requirements.txt
+
+      - name: メタ分析プロンプトを生成
+        id: build_prompt
+        env:
+          META_RUN_DATE: ${{ inputs.run_date }}
+        run: |
+          set -euo pipefail
+
+          # プロンプトのみ生成（LLM 呼び出しはこのステップでは行わない）
+          python - <<'PYEOF'
+          import os, sys
+          from pathlib import Path
+          sys.path.insert(0, "scripts")
+          import meta_analysis as ma
+
+          files = ma.collect_all_log_files()
+          entries = [ma.build_log_entry(f) for f in files]
+          prompt = ma.build_analysis_prompt(entries, ma.run_date())
+          Path("/tmp/meta_analysis_prompt.txt").write_text(prompt, encoding="utf-8")
+          print(f"[meta_analysis] {len(files)} ログファイル収集完了", file=sys.stderr)
+          PYEOF
+
+          wc -c /tmp/meta_analysis_prompt.txt
+
+      - name: LLM でメタ分析を実行
+        id: analyze
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          BACKEND="${{ inputs.backend || 'github_models' }}"
+          if [[ "$BACKEND" == "github_models" ]]; then
+            MODEL="${{ inputs.model || 'claude-sonnet-4' }}"
+          else
+            MODEL="${{ inputs.model || 'claude-opus-4-6' }}"
+          fi
+          echo "backend=$BACKEND / model=$MODEL"
+
+          SYSTEM_PROMPT='あなたはメタ認知分析の専門家です。
+          LLMとの会話ログ群を横断的に分析し、意思決定パターン・未解決課題・LLM活用傾向を抽出してください。
+          出力形式はユーザープロンプトに厳密に従い、SECTION 1 と SECTION 2 の両方を必ず生成してください。'
+
+          printf '%s' "$SYSTEM_PROMPT" > /tmp/meta_analysis_system.txt
+
+          if [[ "$BACKEND" == "github_models" ]]; then
+            jq -n \
+              --arg model "$MODEL" \
+              --rawfile system /tmp/meta_analysis_system.txt \
+              --rawfile user_content /tmp/meta_analysis_prompt.txt \
+              '{
+                model: $model,
+                max_tokens: 4000,
+                messages: [
+                  {"role": "system", "content": $system},
+                  {"role": "user", "content": $user_content}
+                ]
+              }' > /tmp/meta_analysis_request.json
+
+            RESPONSE=$(curl -s -w "\n%{http_code}" \
+              https://models.inference.ai.azure.com/chat/completions \
+              -H "Authorization: Bearer $GITHUB_TOKEN" \
+              -H "content-type: application/json" \
+              -d @/tmp/meta_analysis_request.json)
+            HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+            BODY=$(echo "$RESPONSE" | head -n -1)
+            if [[ "$HTTP_CODE" != "200" ]]; then
+              echo "APIエラー: HTTP $HTTP_CODE"
+              echo "$BODY"
+              exit 1
+            fi
+            LLM_OUTPUT=$(echo "$BODY" | jq -r '.choices[0].message.content')
+          else
+            jq -n \
+              --arg model "$MODEL" \
+              --rawfile system /tmp/meta_analysis_system.txt \
+              --rawfile user_content /tmp/meta_analysis_prompt.txt \
+              '{
+                model: $model,
+                max_tokens: 4000,
+                system: $system,
+                messages: [{"role": "user", "content": $user_content}]
+              }' > /tmp/meta_analysis_request.json
+
+            RESPONSE=$(curl -s -w "\n%{http_code}" \
+              https://api.anthropic.com/v1/messages \
+              -H "x-api-key: $ANTHROPIC_API_KEY" \
+              -H "anthropic-version: 2023-06-01" \
+              -H "content-type: application/json" \
+              -d @/tmp/meta_analysis_request.json)
+            HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+            BODY=$(echo "$RESPONSE" | head -n -1)
+            if [[ "$HTTP_CODE" != "200" ]]; then
+              echo "APIエラー: HTTP $HTTP_CODE"
+              echo "$BODY"
+              exit 1
+            fi
+            LLM_OUTPUT=$(echo "$BODY" | jq -r '.content[0].text')
+          fi
+
+          if [[ -z "$LLM_OUTPUT" || "$LLM_OUTPUT" == "null" ]]; then
+            echo "メタ分析の生成に失敗しました"
+            exit 1
+          fi
+
+          printf '%s\n' "$LLM_OUTPUT" > /tmp/meta_analysis_output.txt
+          echo "LLM 出力を /tmp/meta_analysis_output.txt に保存しました"
+
+      - name: 出力ファイルを書き出し
+        env:
+          META_RUN_DATE: ${{ inputs.run_date }}
+        run: |
+          set -euo pipefail
+
+          python - <<'PYEOF'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, "scripts")
+          import meta_analysis as ma
+
+          llm_text = Path("/tmp/meta_analysis_output.txt").read_text(encoding="utf-8")
+          catalog_md, bootstrap_yml = ma.parse_llm_output(llm_text)
+
+          if not catalog_md:
+              print("[meta_analysis] Warning: empty catalog; writing full output as fallback", file=sys.stderr)
+              catalog_md = llm_text
+
+          ma.write_decision_patterns(catalog_md, ma.run_date())
+
+          if bootstrap_yml:
+              ma.write_session_bootstrap(bootstrap_yml, ma.run_date())
+          else:
+              print("[meta_analysis] Warning: SECTION 2 not found; skipping session-bootstrap update", file=sys.stderr)
+          PYEOF
+
+      - name: 変更をコミット・プッシュ
+        run: |
+          set -euo pipefail
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add logs/meta/decision-patterns.md prompts/session-bootstrap.yml
+
+          if git diff --cached --quiet; then
+            echo "変更なし。コミットをスキップします。"
+          else
+            RUN_DATE="${{ inputs.run_date || '' }}"
+            if [[ -z "$RUN_DATE" ]]; then
+              RUN_DATE=$(date -u +%Y-%m-%d)
+            fi
+            git commit -m "chore(meta): update decision-patterns and session-bootstrap [${RUN_DATE}]"
+            git push
+          fi

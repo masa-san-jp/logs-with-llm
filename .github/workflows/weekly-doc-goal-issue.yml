@@ -63,7 +63,7 @@ jobs:
 
           BACKEND="${{ inputs.backend || 'github_models' }}"
           if [[ "$BACKEND" == "github_models" ]]; then
-            MODEL="${{ inputs.model || 'claude-sonnet-4' }}"
+            MODEL="${{ inputs.model || 'claude-sonnet-4-5' }}"
           else
             MODEL="${{ inputs.model || 'claude-opus-4-6' }}"
           fi

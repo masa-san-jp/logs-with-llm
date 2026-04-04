@@ -5,18 +5,6 @@ on:
     - cron: '0 9 * * 1'  # 毎週月曜 9:00 UTC（日本時間18:00）
   workflow_dispatch:
     inputs:
-      backend:
-        description: "API backend"
-        required: false
-        default: "github_models"
-        type: choice
-        options:
-          - github_models
-          - anthropic
-      model:
-        description: "Model override (空欄=バックエンドのデフォルト)"
-        required: false
-        default: ""
       issue_date:
         description: "Override issue date (YYYY-MM-DD, default: today UTC)"
         required: false
@@ -25,7 +13,6 @@ on:
 permissions:
   contents: read
   issues: write
-  models: read
 
 jobs:
   create-weekly-goal-issue:
@@ -33,7 +20,6 @@ jobs:
     permissions:
       contents: read
       issues: write
-      models: read
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -59,20 +45,11 @@ jobs:
         id: draft
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
-          BACKEND="${{ inputs.backend || 'github_models' }}"
-          if [[ "$BACKEND" == "github_models" ]]; then
-            MODEL="${{ inputs.model || 'claude-sonnet-4' }}"
-            if [[ "$MODEL" == "claude-sonnet-4-5" ]]; then
-              MODEL="claude-sonnet-4"
-            fi
-          else
-            MODEL="${{ inputs.model || 'claude-opus-4-6' }}"
-          fi
-          echo "backend=$BACKEND / model=$MODEL"
+          MODEL="claude-sonnet-4-6"
+          echo "model=$MODEL"
 
           SYSTEM_PROMPT='あなたは GitHub Issue の起票担当者です。
           レポジトリのドキュメント全体を俯瞰したうえで、次に取り組むべき独創的でチャレンジングな目標を 1 件だけ提案してください。
@@ -80,60 +57,31 @@ jobs:
 
           printf '%s' "$SYSTEM_PROMPT" > /tmp/weekly_goal_issue_system.txt
 
-          if [[ "$BACKEND" == "github_models" ]]; then
-            jq -n \
-              --arg model "$MODEL" \
-              --rawfile system /tmp/weekly_goal_issue_system.txt \
-              --rawfile user_content /tmp/weekly_goal_issue_prompt.txt \
-              '{
-                model: $model,
-                max_tokens: 1800,
-                messages: [
-                  {"role": "system", "content": $system},
-                  {"role": "user", "content": $user_content}
-                ]
-              }' > /tmp/weekly_goal_issue_request.json
+          jq -n \
+            --arg model "$MODEL" \
+            --rawfile system /tmp/weekly_goal_issue_system.txt \
+            --rawfile user_content /tmp/weekly_goal_issue_prompt.txt \
+            '{
+              model: $model,
+              max_tokens: 1800,
+              system: $system,
+              messages: [{"role": "user", "content": $user_content}]
+            }' > /tmp/weekly_goal_issue_request.json
 
-            RESPONSE=$(curl -s -w "\n%{http_code}" \
-              https://models.inference.ai.azure.com/chat/completions \
-              -H "Authorization: Bearer $GITHUB_TOKEN" \
-              -H "content-type: application/json" \
-              -d @/tmp/weekly_goal_issue_request.json)
-            HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-            BODY=$(echo "$RESPONSE" | head -n -1)
-            if [[ "$HTTP_CODE" != "200" ]]; then
-              echo "APIエラー: HTTP $HTTP_CODE"
-              echo "$BODY"
-              exit 1
-            fi
-            ISSUE_MD=$(echo "$BODY" | jq -r '.choices[0].message.content')
-          else
-            jq -n \
-              --arg model "$MODEL" \
-              --rawfile system /tmp/weekly_goal_issue_system.txt \
-              --rawfile user_content /tmp/weekly_goal_issue_prompt.txt \
-              '{
-                model: $model,
-                max_tokens: 1800,
-                system: $system,
-                messages: [{"role": "user", "content": $user_content}]
-              }' > /tmp/weekly_goal_issue_request.json
-
-            RESPONSE=$(curl -s -w "\n%{http_code}" \
-              https://api.anthropic.com/v1/messages \
-              -H "x-api-key: $ANTHROPIC_API_KEY" \
-              -H "anthropic-version: 2023-06-01" \
-              -H "content-type: application/json" \
-              -d @/tmp/weekly_goal_issue_request.json)
-            HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-            BODY=$(echo "$RESPONSE" | head -n -1)
-            if [[ "$HTTP_CODE" != "200" ]]; then
-              echo "APIエラー: HTTP $HTTP_CODE"
-              echo "$BODY"
-              exit 1
-            fi
-            ISSUE_MD=$(echo "$BODY" | jq -r '.content[0].text')
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            https://api.anthropic.com/v1/messages \
+            -H "x-api-key: $ANTHROPIC_API_KEY" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "content-type: application/json" \
+            -d @/tmp/weekly_goal_issue_request.json)
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | head -n -1)
+          if [[ "$HTTP_CODE" != "200" ]]; then
+            echo "APIエラー: HTTP $HTTP_CODE"
+            echo "$BODY"
+            exit 1
           fi
+          ISSUE_MD=$(echo "$BODY" | jq -r '.content[0].text')
 
           if [[ -z "$ISSUE_MD" || "$ISSUE_MD" == "null" ]]; then
             echo "Issue 草案の生成に失敗しました"

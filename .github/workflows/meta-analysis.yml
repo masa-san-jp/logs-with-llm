@@ -5,18 +5,6 @@ on:
     - cron: '0 9 * * 4'  # 毎週木曜 9:00 UTC（日本時間18:00）
   workflow_dispatch:      # 手動実行も可能
     inputs:
-      backend:
-        description: "API backend"
-        required: false
-        default: "github_models"
-        type: choice
-        options:
-          - github_models
-          - anthropic
-      model:
-        description: "Model override (空欄=バックエンドのデフォルト: anthropic→claude-opus-4-6 / github_models→claude-sonnet-4)"
-        required: false
-        default: ""
       run_date:
         description: "Override analysis date (YYYY-MM-DD, default: today UTC)"
         required: false
@@ -30,7 +18,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      models: read
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -71,20 +58,11 @@ jobs:
         id: analyze
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
-          BACKEND="${{ inputs.backend || 'github_models' }}"
-          if [[ "$BACKEND" == "github_models" ]]; then
-            MODEL="${{ inputs.model || 'claude-sonnet-4' }}"
-            if [[ "$MODEL" == "claude-sonnet-4-5" ]]; then
-              MODEL="claude-sonnet-4"
-            fi
-          else
-            MODEL="${{ inputs.model || 'claude-opus-4-6' }}"
-          fi
-          echo "backend=$BACKEND / model=$MODEL"
+          MODEL="claude-sonnet-4-6"
+          echo "model=$MODEL"
 
           SYSTEM_PROMPT='あなたはメタ認知分析の専門家です。
           LLMとの会話ログ群を横断的に分析し、意思決定パターン・未解決課題・LLM活用傾向を抽出してください。
@@ -92,60 +70,31 @@ jobs:
 
           printf '%s' "$SYSTEM_PROMPT" > /tmp/meta_analysis_system.txt
 
-          if [[ "$BACKEND" == "github_models" ]]; then
-            jq -n \
-              --arg model "$MODEL" \
-              --rawfile system /tmp/meta_analysis_system.txt \
-              --rawfile user_content /tmp/meta_analysis_prompt.txt \
-              '{
-                model: $model,
-                max_tokens: 4000,
-                messages: [
-                  {"role": "system", "content": $system},
-                  {"role": "user", "content": $user_content}
-                ]
-              }' > /tmp/meta_analysis_request.json
+          jq -n \
+            --arg model "$MODEL" \
+            --rawfile system /tmp/meta_analysis_system.txt \
+            --rawfile user_content /tmp/meta_analysis_prompt.txt \
+            '{
+              model: $model,
+              max_tokens: 4000,
+              system: $system,
+              messages: [{"role": "user", "content": $user_content}]
+            }' > /tmp/meta_analysis_request.json
 
-            RESPONSE=$(curl -s -w "\n%{http_code}" \
-              https://models.inference.ai.azure.com/chat/completions \
-              -H "Authorization: Bearer $GITHUB_TOKEN" \
-              -H "content-type: application/json" \
-              -d @/tmp/meta_analysis_request.json)
-            HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-            BODY=$(echo "$RESPONSE" | head -n -1)
-            if [[ "$HTTP_CODE" != "200" ]]; then
-              echo "APIエラー: HTTP $HTTP_CODE"
-              echo "$BODY"
-              exit 1
-            fi
-            LLM_OUTPUT=$(echo "$BODY" | jq -r '.choices[0].message.content')
-          else
-            jq -n \
-              --arg model "$MODEL" \
-              --rawfile system /tmp/meta_analysis_system.txt \
-              --rawfile user_content /tmp/meta_analysis_prompt.txt \
-              '{
-                model: $model,
-                max_tokens: 4000,
-                system: $system,
-                messages: [{"role": "user", "content": $user_content}]
-              }' > /tmp/meta_analysis_request.json
-
-            RESPONSE=$(curl -s -w "\n%{http_code}" \
-              https://api.anthropic.com/v1/messages \
-              -H "x-api-key: $ANTHROPIC_API_KEY" \
-              -H "anthropic-version: 2023-06-01" \
-              -H "content-type: application/json" \
-              -d @/tmp/meta_analysis_request.json)
-            HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-            BODY=$(echo "$RESPONSE" | head -n -1)
-            if [[ "$HTTP_CODE" != "200" ]]; then
-              echo "APIエラー: HTTP $HTTP_CODE"
-              echo "$BODY"
-              exit 1
-            fi
-            LLM_OUTPUT=$(echo "$BODY" | jq -r '.content[0].text')
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            https://api.anthropic.com/v1/messages \
+            -H "x-api-key: $ANTHROPIC_API_KEY" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "content-type: application/json" \
+            -d @/tmp/meta_analysis_request.json)
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | head -n -1)
+          if [[ "$HTTP_CODE" != "200" ]]; then
+            echo "APIエラー: HTTP $HTTP_CODE"
+            echo "$BODY"
+            exit 1
           fi
+          LLM_OUTPUT=$(echo "$BODY" | jq -r '.content[0].text')
 
           if [[ -z "$LLM_OUTPUT" || "$LLM_OUTPUT" == "null" ]]; then
             echo "メタ分析の生成に失敗しました"

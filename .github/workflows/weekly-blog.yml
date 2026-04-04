@@ -24,7 +24,6 @@ jobs:
       contents: write  # git push に必要
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-      GITHUB_MODELS_MODEL: claude-sonnet-4
 
     steps:
       - name: リポジトリをチェックアウト
@@ -96,7 +95,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          MODEL="${GITHUB_MODELS_MODEL}"
+          MODEL="claude-sonnet-4-6"
           echo "model=$MODEL"
 
           START_DATE="${{ steps.collect.outputs.start_date }}"
@@ -195,7 +194,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          MODEL="${GITHUB_MODELS_MODEL}"
+          MODEL="claude-sonnet-4-6"
 
           START_DATE="${{ steps.collect.outputs.start_date }}"
           END_DATE="${{ steps.collect.outputs.end_date }}"
@@ -275,7 +274,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          MODEL="${GITHUB_MODELS_MODEL}"
+          MODEL="claude-sonnet-4-6"
           echo "model=$MODEL"
 
           START_DATE="${{ steps.collect.outputs.start_date }}"
@@ -361,7 +360,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          MODEL="${GITHUB_MODELS_MODEL}"
+          MODEL="claude-sonnet-4-6"
           echo "model=$MODEL"
 
           START_DATE="${{ steps.collect.outputs.start_date }}"

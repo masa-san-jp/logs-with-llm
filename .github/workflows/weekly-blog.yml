@@ -14,7 +14,7 @@ on:
           - github_models
           - anthropic
       model:
-        description: "Model override (空欄=バックエンドのデフォルト: anthropic→claude-opus-4-6 / github_models→claude-sonnet-4-5)"
+        description: "Model override (空欄=バックエンドのデフォルト: anthropic→claude-opus-4-6 / github_models→claude-sonnet-4)"
         required: false
         default: ""
       blog_days:
@@ -40,7 +40,7 @@ jobs:
 
     steps:
       - name: リポジトリをチェックアウト
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 依存ツールのインストール
         run: sudo apt-get update -y && sudo apt-get install -y jq curl
@@ -111,7 +111,7 @@ jobs:
 
           BACKEND="${{ inputs.backend || 'github_models' }}"
           if [[ "$BACKEND" == "github_models" ]]; then
-            MODEL="${{ inputs.model || 'claude-sonnet-4-5' }}"
+            MODEL="${{ inputs.model || 'claude-sonnet-4' }}"
             if [[ "$MODEL" == "claude-sonnet-4" ]]; then
               MODEL="claude-sonnet-4-5"
             fi
@@ -248,7 +248,7 @@ jobs:
 
           BACKEND="${{ inputs.backend || 'github_models' }}"
           if [[ "$BACKEND" == "github_models" ]]; then
-            MODEL="${{ inputs.model || 'claude-sonnet-4-5' }}"
+            MODEL="${{ inputs.model || 'claude-sonnet-4' }}"
             if [[ "$MODEL" == "claude-sonnet-4" ]]; then
               MODEL="claude-sonnet-4-5"
             fi
@@ -366,7 +366,7 @@ jobs:
 
           BACKEND="${{ inputs.backend || 'github_models' }}"
           if [[ "$BACKEND" == "github_models" ]]; then
-            MODEL="${{ inputs.model || 'claude-sonnet-4-5' }}"
+            MODEL="${{ inputs.model || 'claude-sonnet-4' }}"
             if [[ "$MODEL" == "claude-sonnet-4" ]]; then
               MODEL="claude-sonnet-4-5"
             fi
@@ -490,7 +490,7 @@ jobs:
 
           BACKEND="${{ inputs.backend || 'github_models' }}"
           if [[ "$BACKEND" == "github_models" ]]; then
-            MODEL="${{ inputs.model || 'claude-sonnet-4-5' }}"
+            MODEL="${{ inputs.model || 'claude-sonnet-4' }}"
             if [[ "$MODEL" == "claude-sonnet-4" ]]; then
               MODEL="claude-sonnet-4-5"
             fi

@@ -5,18 +5,6 @@ on:
     - cron: '0 9 * * 5'  # 毎週金曜 9:00 UTC（日本時間18:00）
   workflow_dispatch:      # 手動実行も可能
     inputs:
-      backend:
-        description: "API backend"
-        required: false
-        default: "github_models"
-        type: choice
-        options:
-          - github_models
-          - anthropic
-      model:
-        description: "Model override (空欄=バックエンドのデフォルト: anthropic→claude-opus-4-6 / github_models→claude-sonnet-4)"
-        required: false
-        default: ""
       blog_days:
         description: "Number of days to look back (default: 7)"
         required: false
@@ -104,18 +92,12 @@ jobs:
         id: summarize_ja
         if: steps.collect.outputs.has_files == 'true'
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
-          BACKEND="${{ inputs.backend || 'github_models' }}"
-          if [[ "$BACKEND" == "github_models" ]]; then
-            MODEL="${{ inputs.model || 'claude-sonnet-4' }}"
-          else
-            MODEL="${{ inputs.model || 'claude-opus-4-6' }}"
-          fi
-          echo "backend=$BACKEND / model=$MODEL"
+          MODEL="claude-sonnet-4-5"
+          echo "model=$MODEL"
 
           START_DATE="${{ steps.collect.outputs.start_date }}"
           END_DATE="${{ steps.collect.outputs.end_date }}"
@@ -166,60 +148,32 @@ jobs:
 
             printf '%s' "$SYSTEM_PROMPT" > /tmp/summaries/system_prompt.txt
 
-            if [[ "$BACKEND" == "github_models" ]]; then
-              jq -n \
-                --arg model "$MODEL" \
-                --rawfile system /tmp/summaries/system_prompt.txt \
-                --rawfile user_content /tmp/summaries/current_user.txt \
-                '{
-                  model: $model,
-                  max_tokens: 1200,
-                  messages: [
-                    {"role": "system", "content": $system},
-                    {"role": "user", "content": $user_content}
-                  ]
-                }' > /tmp/summaries/request.json
+            jq -n \
+              --arg model "$MODEL" \
+              --rawfile system /tmp/summaries/system_prompt.txt \
+              --rawfile user_content /tmp/summaries/current_user.txt \
+              '{
+                model: $model,
+                max_tokens: 1200,
+                messages: [
+                  {"role": "system", "content": $system},
+                  {"role": "user", "content": $user_content}
+                ]
+              }' > /tmp/summaries/request.json
 
-              RESPONSE=$(curl -s -w "\n%{http_code}" \
-                https://models.inference.ai.azure.com/chat/completions \
-                -H "Authorization: Bearer $GITHUB_TOKEN" \
-                -H "content-type: application/json" \
-                -d @/tmp/summaries/request.json)
-              HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-              BODY=$(echo "$RESPONSE" | head -n -1)
-              if [ "$HTTP_CODE" != "200" ]; then
-                echo "APIエラー: HTTP $HTTP_CODE ($f)"
-                echo "$BODY"
-                exit 1
-              fi
-              SUMMARY=$(echo "$BODY" | jq -r '.choices[0].message.content')
-            else
-              jq -n \
-                --arg model "$MODEL" \
-                --rawfile system /tmp/summaries/system_prompt.txt \
-                --rawfile user_content /tmp/summaries/current_user.txt \
-                '{
-                  model: $model,
-                  max_tokens: 1200,
-                  system: $system,
-                  messages: [{"role": "user", "content": $user_content}]
-                }' > /tmp/summaries/request.json
-
-              RESPONSE=$(curl -s -w "\n%{http_code}" \
-                https://api.anthropic.com/v1/messages \
-                -H "x-api-key: $ANTHROPIC_API_KEY" \
-                -H "anthropic-version: 2023-06-01" \
-                -H "content-type: application/json" \
-                -d @/tmp/summaries/request.json)
-              HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-              BODY=$(echo "$RESPONSE" | head -n -1)
-              if [ "$HTTP_CODE" != "200" ]; then
-                echo "APIエラー: HTTP $HTTP_CODE ($f)"
-                echo "$BODY"
-                exit 1
-              fi
-              SUMMARY=$(echo "$BODY" | jq -r '.content[0].text')
+            RESPONSE=$(curl -s -w "\n%{http_code}" \
+              https://models.inference.ai.azure.com/chat/completions \
+              -H "Authorization: Bearer $GITHUB_TOKEN" \
+              -H "content-type: application/json" \
+              -d @/tmp/summaries/request.json)
+            HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+            BODY=$(echo "$RESPONSE" | head -n -1)
+            if [ "$HTTP_CODE" != "200" ]; then
+              echo "APIエラー: HTTP $HTTP_CODE ($f)"
+              echo "$BODY"
+              exit 1
             fi
+            SUMMARY=$(echo "$BODY" | jq -r '.choices[0].message.content')
 
             if [[ -z "$SUMMARY" || "$SUMMARY" == "null" ]]; then
               echo "要約の取得に失敗しました: $f"
@@ -238,17 +192,11 @@ jobs:
         id: merge_ja
         if: steps.collect.outputs.has_files == 'true'
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
-          BACKEND="${{ inputs.backend || 'github_models' }}"
-          if [[ "$BACKEND" == "github_models" ]]; then
-            MODEL="${{ inputs.model || 'claude-sonnet-4' }}"
-          else
-            MODEL="${{ inputs.model || 'claude-opus-4-6' }}"
-          fi
+          MODEL="claude-sonnet-4-5"
 
           START_DATE="${{ steps.collect.outputs.start_date }}"
           END_DATE="${{ steps.collect.outputs.end_date }}"
@@ -285,60 +233,32 @@ jobs:
             done < /tmp/summaries/index.txt
           } > /tmp/summaries/merge_user.txt
 
-          if [[ "$BACKEND" == "github_models" ]]; then
-            jq -n \
-              --arg model "$MODEL" \
-              --rawfile system /tmp/summaries/merge_system.txt \
-              --rawfile user_content /tmp/summaries/merge_user.txt \
-              '{
-                model: $model,
-                max_tokens: 1600,
-                messages: [
-                  {"role": "system", "content": $system},
-                  {"role": "user", "content": $user_content}
-                ]
-              }' > /tmp/summaries/merge_request.json
+          jq -n \
+            --arg model "$MODEL" \
+            --rawfile system /tmp/summaries/merge_system.txt \
+            --rawfile user_content /tmp/summaries/merge_user.txt \
+            '{
+              model: $model,
+              max_tokens: 1600,
+              messages: [
+                {"role": "system", "content": $system},
+                {"role": "user", "content": $user_content}
+              ]
+            }' > /tmp/summaries/merge_request.json
 
-            RESPONSE=$(curl -s -w "\n%{http_code}" \
-              https://models.inference.ai.azure.com/chat/completions \
-              -H "Authorization: Bearer $GITHUB_TOKEN" \
-              -H "content-type: application/json" \
-              -d @/tmp/summaries/merge_request.json)
-            HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-            BODY=$(echo "$RESPONSE" | head -n -1)
-            if [ "$HTTP_CODE" != "200" ]; then
-              echo "APIエラー: HTTP $HTTP_CODE"
-              echo "$BODY"
-              exit 1
-            fi
-            MERGED=$(echo "$BODY" | jq -r '.choices[0].message.content')
-          else
-            jq -n \
-              --arg model "$MODEL" \
-              --rawfile system /tmp/summaries/merge_system.txt \
-              --rawfile user_content /tmp/summaries/merge_user.txt \
-              '{
-                model: $model,
-                max_tokens: 1600,
-                system: $system,
-                messages: [{"role": "user", "content": $user_content}]
-              }' > /tmp/summaries/merge_request.json
-
-            RESPONSE=$(curl -s -w "\n%{http_code}" \
-              https://api.anthropic.com/v1/messages \
-              -H "x-api-key: $ANTHROPIC_API_KEY" \
-              -H "anthropic-version: 2023-06-01" \
-              -H "content-type: application/json" \
-              -d @/tmp/summaries/merge_request.json)
-            HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-            BODY=$(echo "$RESPONSE" | head -n -1)
-            if [ "$HTTP_CODE" != "200" ]; then
-              echo "APIエラー: HTTP $HTTP_CODE"
-              echo "$BODY"
-              exit 1
-            fi
-            MERGED=$(echo "$BODY" | jq -r '.content[0].text')
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            https://models.inference.ai.azure.com/chat/completions \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "content-type: application/json" \
+            -d @/tmp/summaries/merge_request.json)
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | head -n -1)
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "APIエラー: HTTP $HTTP_CODE"
+            echo "$BODY"
+            exit 1
           fi
+          MERGED=$(echo "$BODY" | jq -r '.choices[0].message.content')
 
           if [[ -z "$MERGED" || "$MERGED" == "null" ]]; then
             echo "統合要約の取得に失敗しました"
@@ -353,18 +273,12 @@ jobs:
         id: generate_ja
         if: steps.collect.outputs.has_files == 'true'
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
-          BACKEND="${{ inputs.backend || 'github_models' }}"
-          if [[ "$BACKEND" == "github_models" ]]; then
-            MODEL="${{ inputs.model || 'claude-sonnet-4' }}"
-          else
-            MODEL="${{ inputs.model || 'claude-opus-4-6' }}"
-          fi
-          echo "backend=$BACKEND / model=$MODEL"
+          MODEL="claude-sonnet-4-5"
+          echo "model=$MODEL"
 
           START_DATE="${{ steps.collect.outputs.start_date }}"
           END_DATE="${{ steps.collect.outputs.end_date }}"
@@ -403,60 +317,32 @@ jobs:
             cat /tmp/summaries/weekly_merged_ja.md
           } > /tmp/summaries/blog_user_ja.txt
 
-          if [[ "$BACKEND" == "github_models" ]]; then
-            jq -n \
-              --arg model "$MODEL" \
-              --rawfile system /tmp/summaries/blog_system_ja.txt \
-              --rawfile user_content /tmp/summaries/blog_user_ja.txt \
-              '{
-                model: $model,
-                max_tokens: 4096,
-                messages: [
-                  {"role": "system", "content": $system},
-                  {"role": "user", "content": $user_content}
-                ]
-              }' > /tmp/summaries/blog_request_ja.json
+          jq -n \
+            --arg model "$MODEL" \
+            --rawfile system /tmp/summaries/blog_system_ja.txt \
+            --rawfile user_content /tmp/summaries/blog_user_ja.txt \
+            '{
+              model: $model,
+              max_tokens: 4096,
+              messages: [
+                {"role": "system", "content": $system},
+                {"role": "user", "content": $user_content}
+              ]
+            }' > /tmp/summaries/blog_request_ja.json
 
-            RESPONSE=$(curl -s -w "\n%{http_code}" \
-              https://models.inference.ai.azure.com/chat/completions \
-              -H "Authorization: Bearer $GITHUB_TOKEN" \
-              -H "content-type: application/json" \
-              -d @/tmp/summaries/blog_request_ja.json)
-            HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-            BODY=$(echo "$RESPONSE" | head -n -1)
-            if [ "$HTTP_CODE" != "200" ]; then
-              echo "APIエラー: HTTP $HTTP_CODE"
-              echo "$BODY"
-              exit 1
-            fi
-            BLOG=$(echo "$BODY" | jq -r '.choices[0].message.content')
-          else
-            jq -n \
-              --arg model "$MODEL" \
-              --rawfile system /tmp/summaries/blog_system_ja.txt \
-              --rawfile user_content /tmp/summaries/blog_user_ja.txt \
-              '{
-                model: $model,
-                max_tokens: 4096,
-                system: $system,
-                messages: [{"role": "user", "content": $user_content}]
-              }' > /tmp/summaries/blog_request_ja.json
-
-            RESPONSE=$(curl -s -w "\n%{http_code}" \
-              https://api.anthropic.com/v1/messages \
-              -H "x-api-key: $ANTHROPIC_API_KEY" \
-              -H "anthropic-version: 2023-06-01" \
-              -H "content-type: application/json" \
-              -d @/tmp/summaries/blog_request_ja.json)
-            HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-            BODY=$(echo "$RESPONSE" | head -n -1)
-            if [ "$HTTP_CODE" != "200" ]; then
-              echo "APIエラー: HTTP $HTTP_CODE"
-              echo "$BODY"
-              exit 1
-            fi
-            BLOG=$(echo "$BODY" | jq -r '.content[0].text')
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            https://models.inference.ai.azure.com/chat/completions \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "content-type: application/json" \
+            -d @/tmp/summaries/blog_request_ja.json)
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | head -n -1)
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "APIエラー: HTTP $HTTP_CODE"
+            echo "$BODY"
+            exit 1
           fi
+          BLOG=$(echo "$BODY" | jq -r '.choices[0].message.content')
 
           if [[ -z "$BLOG" || "$BLOG" == "null" ]]; then
             echo "ブログ記事の取得に失敗しました"
@@ -474,18 +360,12 @@ jobs:
         id: generate_en
         if: steps.collect.outputs.has_files == 'true'
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
-          BACKEND="${{ inputs.backend || 'github_models' }}"
-          if [[ "$BACKEND" == "github_models" ]]; then
-            MODEL="${{ inputs.model || 'claude-sonnet-4' }}"
-          else
-            MODEL="${{ inputs.model || 'claude-opus-4-6' }}"
-          fi
-          echo "backend=$BACKEND / model=$MODEL"
+          MODEL="claude-sonnet-4-5"
+          echo "model=$MODEL"
 
           START_DATE="${{ steps.collect.outputs.start_date }}"
           END_DATE="${{ steps.collect.outputs.end_date }}"
@@ -525,60 +405,32 @@ jobs:
             cat /tmp/summaries/weekly_merged_ja.md
           } > /tmp/summaries/blog_user_en.txt
 
-          if [[ "$BACKEND" == "github_models" ]]; then
-            jq -n \
-              --arg model "$MODEL" \
-              --rawfile system /tmp/summaries/blog_system_en.txt \
-              --rawfile user_content /tmp/summaries/blog_user_en.txt \
-              '{
-                model: $model,
-                max_tokens: 4096,
-                messages: [
-                  {"role": "system", "content": $system},
-                  {"role": "user", "content": $user_content}
-                ]
-              }' > /tmp/summaries/blog_request_en.json
+          jq -n \
+            --arg model "$MODEL" \
+            --rawfile system /tmp/summaries/blog_system_en.txt \
+            --rawfile user_content /tmp/summaries/blog_user_en.txt \
+            '{
+              model: $model,
+              max_tokens: 4096,
+              messages: [
+                {"role": "system", "content": $system},
+                {"role": "user", "content": $user_content}
+              ]
+            }' > /tmp/summaries/blog_request_en.json
 
-            RESPONSE=$(curl -s -w "\n%{http_code}" \
-              https://models.inference.ai.azure.com/chat/completions \
-              -H "Authorization: Bearer $GITHUB_TOKEN" \
-              -H "content-type: application/json" \
-              -d @/tmp/summaries/blog_request_en.json)
-            HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-            BODY=$(echo "$RESPONSE" | head -n -1)
-            if [ "$HTTP_CODE" != "200" ]; then
-              echo "API error: HTTP $HTTP_CODE"
-              echo "$BODY"
-              exit 1
-            fi
-            BLOG_EN=$(echo "$BODY" | jq -r '.choices[0].message.content')
-          else
-            jq -n \
-              --arg model "$MODEL" \
-              --rawfile system /tmp/summaries/blog_system_en.txt \
-              --rawfile user_content /tmp/summaries/blog_user_en.txt \
-              '{
-                model: $model,
-                max_tokens: 4096,
-                system: $system,
-                messages: [{"role": "user", "content": $user_content}]
-              }' > /tmp/summaries/blog_request_en.json
-
-            RESPONSE=$(curl -s -w "\n%{http_code}" \
-              https://api.anthropic.com/v1/messages \
-              -H "x-api-key: $ANTHROPIC_API_KEY" \
-              -H "anthropic-version: 2023-06-01" \
-              -H "content-type: application/json" \
-              -d @/tmp/summaries/blog_request_en.json)
-            HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-            BODY=$(echo "$RESPONSE" | head -n -1)
-            if [ "$HTTP_CODE" != "200" ]; then
-              echo "API error: HTTP $HTTP_CODE"
-              echo "$BODY"
-              exit 1
-            fi
-            BLOG_EN=$(echo "$BODY" | jq -r '.content[0].text')
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            https://models.inference.ai.azure.com/chat/completions \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "content-type: application/json" \
+            -d @/tmp/summaries/blog_request_en.json)
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | head -n -1)
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "API error: HTTP $HTTP_CODE"
+            echo "$BODY"
+            exit 1
           fi
+          BLOG_EN=$(echo "$BODY" | jq -r '.choices[0].message.content')
 
           if [[ -z "$BLOG_EN" || "$BLOG_EN" == "null" ]]; then
             echo "English blog post retrieval failed"

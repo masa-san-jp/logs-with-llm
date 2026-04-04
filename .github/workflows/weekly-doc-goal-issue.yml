@@ -25,6 +25,7 @@ on:
 permissions:
   contents: read
   issues: write
+  models: read
 
 jobs:
   create-weekly-goal-issue:
@@ -32,6 +33,7 @@ jobs:
     permissions:
       contents: read
       issues: write
+      models: read
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -64,6 +66,9 @@ jobs:
           BACKEND="${{ inputs.backend || 'github_models' }}"
           if [[ "$BACKEND" == "github_models" ]]; then
             MODEL="${{ inputs.model || 'claude-sonnet-4-5' }}"
+            if [[ "$MODEL" == "claude-sonnet-4" ]]; then
+              MODEL="claude-sonnet-4-5"
+            fi
           else
             MODEL="${{ inputs.model || 'claude-opus-4-6' }}"
           fi

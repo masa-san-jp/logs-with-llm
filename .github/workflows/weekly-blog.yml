@@ -22,7 +22,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write  # git push に必要
-      models: read
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -92,7 +91,7 @@ jobs:
         id: summarize_ja
         if: steps.collect.outputs.has_files == 'true'
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           set -euo pipefail
 
@@ -155,15 +154,14 @@ jobs:
               '{
                 model: $model,
                 max_tokens: 1200,
-                messages: [
-                  {"role": "system", "content": $system},
-                  {"role": "user", "content": $user_content}
-                ]
+                system: $system,
+                messages: [{"role": "user", "content": $user_content}]
               }' > /tmp/summaries/request.json
 
             RESPONSE=$(curl -s -w "\n%{http_code}" \
-              https://models.inference.ai.azure.com/chat/completions \
-              -H "Authorization: Bearer $GITHUB_TOKEN" \
+              https://api.anthropic.com/v1/messages \
+              -H "x-api-key: $ANTHROPIC_API_KEY" \
+              -H "anthropic-version: 2023-06-01" \
               -H "content-type: application/json" \
               -d @/tmp/summaries/request.json)
             HTTP_CODE=$(echo "$RESPONSE" | tail -1)
@@ -173,7 +171,7 @@ jobs:
               echo "$BODY"
               exit 1
             fi
-            SUMMARY=$(echo "$BODY" | jq -r '.choices[0].message.content')
+            SUMMARY=$(echo "$BODY" | jq -r '.content[0].text')
 
             if [[ -z "$SUMMARY" || "$SUMMARY" == "null" ]]; then
               echo "要約の取得に失敗しました: $f"
@@ -192,7 +190,7 @@ jobs:
         id: merge_ja
         if: steps.collect.outputs.has_files == 'true'
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           set -euo pipefail
 
@@ -240,15 +238,14 @@ jobs:
             '{
               model: $model,
               max_tokens: 1600,
-              messages: [
-                {"role": "system", "content": $system},
-                {"role": "user", "content": $user_content}
-              ]
+              system: $system,
+              messages: [{"role": "user", "content": $user_content}]
             }' > /tmp/summaries/merge_request.json
 
           RESPONSE=$(curl -s -w "\n%{http_code}" \
-            https://models.inference.ai.azure.com/chat/completions \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            https://api.anthropic.com/v1/messages \
+            -H "x-api-key: $ANTHROPIC_API_KEY" \
+            -H "anthropic-version: 2023-06-01" \
             -H "content-type: application/json" \
             -d @/tmp/summaries/merge_request.json)
           HTTP_CODE=$(echo "$RESPONSE" | tail -1)
@@ -258,7 +255,7 @@ jobs:
             echo "$BODY"
             exit 1
           fi
-          MERGED=$(echo "$BODY" | jq -r '.choices[0].message.content')
+          MERGED=$(echo "$BODY" | jq -r '.content[0].text')
 
           if [[ -z "$MERGED" || "$MERGED" == "null" ]]; then
             echo "統合要約の取得に失敗しました"
@@ -273,7 +270,7 @@ jobs:
         id: generate_ja
         if: steps.collect.outputs.has_files == 'true'
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           set -euo pipefail
 
@@ -324,15 +321,14 @@ jobs:
             '{
               model: $model,
               max_tokens: 4096,
-              messages: [
-                {"role": "system", "content": $system},
-                {"role": "user", "content": $user_content}
-              ]
+              system: $system,
+              messages: [{"role": "user", "content": $user_content}]
             }' > /tmp/summaries/blog_request_ja.json
 
           RESPONSE=$(curl -s -w "\n%{http_code}" \
-            https://models.inference.ai.azure.com/chat/completions \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            https://api.anthropic.com/v1/messages \
+            -H "x-api-key: $ANTHROPIC_API_KEY" \
+            -H "anthropic-version: 2023-06-01" \
             -H "content-type: application/json" \
             -d @/tmp/summaries/blog_request_ja.json)
           HTTP_CODE=$(echo "$RESPONSE" | tail -1)
@@ -342,7 +338,7 @@ jobs:
             echo "$BODY"
             exit 1
           fi
-          BLOG=$(echo "$BODY" | jq -r '.choices[0].message.content')
+          BLOG=$(echo "$BODY" | jq -r '.content[0].text')
 
           if [[ -z "$BLOG" || "$BLOG" == "null" ]]; then
             echo "ブログ記事の取得に失敗しました"
@@ -360,7 +356,7 @@ jobs:
         id: generate_en
         if: steps.collect.outputs.has_files == 'true'
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           set -euo pipefail
 
@@ -412,15 +408,14 @@ jobs:
             '{
               model: $model,
               max_tokens: 4096,
-              messages: [
-                {"role": "system", "content": $system},
-                {"role": "user", "content": $user_content}
-              ]
+              system: $system,
+              messages: [{"role": "user", "content": $user_content}]
             }' > /tmp/summaries/blog_request_en.json
 
           RESPONSE=$(curl -s -w "\n%{http_code}" \
-            https://models.inference.ai.azure.com/chat/completions \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            https://api.anthropic.com/v1/messages \
+            -H "x-api-key: $ANTHROPIC_API_KEY" \
+            -H "anthropic-version: 2023-06-01" \
             -H "content-type: application/json" \
             -d @/tmp/summaries/blog_request_en.json)
           HTTP_CODE=$(echo "$RESPONSE" | tail -1)
@@ -430,7 +425,7 @@ jobs:
             echo "$BODY"
             exit 1
           fi
-          BLOG_EN=$(echo "$BODY" | jq -r '.choices[0].message.content')
+          BLOG_EN=$(echo "$BODY" | jq -r '.content[0].text')
 
           if [[ -z "$BLOG_EN" || "$BLOG_EN" == "null" ]]; then
             echo "English blog post retrieval failed"

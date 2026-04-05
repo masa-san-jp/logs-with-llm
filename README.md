@@ -100,7 +100,8 @@ Friday at 09:00 UTC and analyzes the repository documentation as a whole.
 
 It builds an inventory from `README.md`, `prompts/`, `blog/`, and `logs/` (including
 **PDF files** in `logs/`), asks an LLM to identify the most original and challenging
-next goal, and then opens a GitHub issue draft as a regular issue.
+next goal, writes both the generated inventory prompt and the returned draft as Markdown
+files, and then opens a GitHub issue draft as a regular issue.
 
 ### Environment variables / workflow inputs
 

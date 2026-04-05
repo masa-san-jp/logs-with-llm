@@ -45,7 +45,7 @@ Generated posts are saved under `blog/YYYY-MM-DD.md` and opened as a PR for revi
 | `ANTHROPIC_API_KEY` | — | Required for `anthropic` mode (store as GitHub Secret) |
 | `ANTHROPIC_MODEL` | `claude-sonnet-4-20250514` | Model for Anthropic mode |
 | `OLLAMA_URL` | `http://localhost:11434` | Ollama endpoint |
-| `OLLAMA_MODEL` | `llama3` | Model for Ollama mode |
+| `OLLAMA_MODEL` | `gpt-oss:20b` | Model for Ollama mode |
 
 ### Running locally with Anthropic
 
@@ -75,7 +75,7 @@ Together AI, Groq) by setting `OPENAI_BASE_URL`.
 ollama serve &
 
 # 2. Pull the model once
-ollama pull llama3
+ollama pull gpt-oss:20b
 
 # 3. Run the generator
 LLM_PROVIDER=ollama python scripts/generate_weekly_blog.py

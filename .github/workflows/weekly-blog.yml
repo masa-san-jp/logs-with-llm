@@ -2,454 +2,77 @@ name: Weekly Blog Generator
 
 on:
   schedule:
-    - cron: '0 9 * * 5'  # 毎週金曜 9:00 UTC（日本時間18:00）
-  workflow_dispatch:      # 手動実行も可能
+    - cron: '0 9 * * 5'  # 毎週金曜 9:00 UTC
+  workflow_dispatch:
     inputs:
+      llm_provider:
+        description: "LLM provider: openai or anthropic"
+        required: false
+        default: "openai"
+        type: choice
+        options:
+          - openai
+          - anthropic
       blog_days:
-        description: "Number of days to look back (default: 7)"
+        description: "Number of days to look back"
         required: false
         default: "7"
       blog_date:
-        description: "Override output date (YYYY-MM-DD, default: today UTC)"
+        description: "Override output date (YYYY-MM-DD)"
         required: false
         default: ""
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   generate-blog:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write  # git push に必要
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
-      - name: リポジトリをチェックアウト
-        uses: actions/checkout@v5
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: 依存ツールのインストール
-        run: sudo apt-get update -y && sudo apt-get install -y jq curl
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
 
-      - name: Python 依存パッケージのインストール
+      - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: 対象ログファイルを収集
-        id: collect
+      - name: Generate weekly blog
+        env:
+          LLM_PROVIDER: ${{ inputs.llm_provider || 'openai' }}
+          BLOG_DAYS: ${{ inputs.blog_days || '7' }}
+          BLOG_DATE: ${{ inputs.blog_date || '' }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL || 'https://api.openai.com/v1' }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4o-mini' }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514' }}
+        run: python scripts/generate_weekly_blog.py
+
+      - name: Check for changes
+        id: check
         run: |
-          set -euo pipefail
-
-          DAYS="${{ inputs.blog_days || '7' }}"
-          START_DATE=$(date -d "${DAYS} days ago" +%Y%m%d)
-          END_DATE=$(date +%Y%m%d)
-          echo "対象期間: $START_DATE 〜 $END_DATE (${DAYS}日分)"
-
-          TARGET_FILES=()
-
-          for item in logs/*; do
-            item_basename=$(basename "$item")
-            prefix=$(echo "$item_basename" | grep -oP '^\d{8}' || true)
-
-            if [[ -z "$prefix" || "$prefix" -lt "$START_DATE" || "$prefix" -gt "$END_DATE" ]]; then
-              continue
-            fi
-
-            if [[ -f "$item" && "$item" == *.md ]]; then
-              TARGET_FILES+=("$item")
-            elif [[ -d "$item" ]]; then
-              while IFS= read -r mdfile; do
-                TARGET_FILES+=("$mdfile")
-              done < <(find "$item" -name "*.md" | sort)
-            fi
-          done
-
-          if [ ${#TARGET_FILES[@]} -eq 0 ]; then
-            echo "今週の対象ファイルがありません。終了します。"
-            echo "has_files=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          echo "対象ファイル数: ${#TARGET_FILES[@]}"
-          echo "has_files=true" >> "$GITHUB_OUTPUT"
-          echo "start_date=$START_DATE" >> "$GITHUB_OUTPUT"
-          echo "end_date=$END_DATE" >> "$GITHUB_OUTPUT"
-
-          OVERRIDE_DATE="${{ inputs.blog_date }}"
-          if [[ -n "$OVERRIDE_DATE" ]]; then
-            OUTPUT_DATE=$(date -d "$OVERRIDE_DATE" +%Y%m%d 2>/dev/null || date +%Y%m%d)
+          if git diff --quiet blog/; then
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
           else
-            OUTPUT_DATE=$(date +%Y%m%d)
-          fi
-          echo "output_date=$OUTPUT_DATE" >> "$GITHUB_OUTPUT"
-
-          # 週次対象ファイル一覧を保存
-          printf '%s\n' "${TARGET_FILES[@]}" > /tmp/weekly_files.txt
-          echo "files_list=/tmp/weekly_files.txt" >> "$GITHUB_OUTPUT"
-
-      - name: ログファイル単位で要約（日本語）
-        id: summarize_ja
-        if: steps.collect.outputs.has_files == 'true'
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: |
-          set -euo pipefail
-
-          MODEL="claude-sonnet-4-6"
-          echo "model=$MODEL"
-
-          START_DATE="${{ steps.collect.outputs.start_date }}"
-          END_DATE="${{ steps.collect.outputs.end_date }}"
-
-          mkdir -p /tmp/summaries
-          : > /tmp/summaries/index.txt
-
-          SYSTEM_PROMPT='あなたは要約者です。以下のログ（1ファイル分）を、週次ブログ生成用の素材として要約してください。
-
-          ## 目的
-          - 週次ブログで取り上げる論点と学びを抽出する
-          - 冗長なやり取りは圧縮する
-
-          ## 出力形式（厳守）
-          - 見出し: 1行でテーマ
-          - 要点: 箇条書き5〜10個
-          - 気づき: 2〜5個
-          - 引用候補: ログから短い引用を最大3つ（各200字以内）
-          - 注意/未解決: 1〜3個
-
-          ## 制約
-          - 秘密情報（APIキー・トークン・パスワード等）は含めない。見つけたら [REDACTED] と書く
-          - 日本語で書く
-          '
-
-          while IFS= read -r f; do
-            [[ -z "$f" ]] && continue
-            echo "Summarizing: $f"
-
-            safe_name=$(echo "$f" | sed -E 's#[^A-Za-z0-9._-]+#_#g')
-
-            # マスキング（ファイル単位）
-            sed -E '
-              s/(api[_-]?key[[:space:]]*[:=][[:space:]]*)[A-Za-z0-9._-]+/\1[REDACTED]/gi;
-              s/(token[[:space:]]*[:=][[:space:]]*)[A-Za-z0-9._-]+/\1[REDACTED]/gi;
-              s/(password[[:space:]]*[:=][[:space:]]*)[^[:space:]]+/\1[REDACTED]/gi;
-              s/(authorization[[:space:]]*:[[:space:]]*Bearer[[:space:]]+)[^[:space:]]+/\1[REDACTED]/gi;
-              s/[A-Za-z0-9+\/]{32,}={0,2}/[REDACTED]/g
-            ' "$f" > "/tmp/summaries/${safe_name}.redacted.txt"
-
-            # ユーザーコンテンツをファイル化（巨大引数を避ける）
-            {
-              echo "対象期間: ${START_DATE}〜${END_DATE}"
-              echo "ファイル: $f"
-              echo
-              cat "/tmp/summaries/${safe_name}.redacted.txt"
-            } > /tmp/summaries/current_user.txt
-
-            printf '%s' "$SYSTEM_PROMPT" > /tmp/summaries/system_prompt.txt
-
-            jq -n \
-              --arg model "$MODEL" \
-              --rawfile system /tmp/summaries/system_prompt.txt \
-              --rawfile user_content /tmp/summaries/current_user.txt \
-              '{
-                model: $model,
-                max_tokens: 1200,
-                system: $system,
-                messages: [{"role": "user", "content": $user_content}]
-              }' > /tmp/summaries/request.json
-
-            RESPONSE=$(curl -s -w "\n%{http_code}" \
-              https://api.anthropic.com/v1/messages \
-              -H "x-api-key: $ANTHROPIC_API_KEY" \
-              -H "anthropic-version: 2023-06-01" \
-              -H "content-type: application/json" \
-              -d @/tmp/summaries/request.json)
-            HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-            BODY=$(echo "$RESPONSE" | head -n -1)
-            if [ "$HTTP_CODE" != "200" ]; then
-              echo "APIエラー: HTTP $HTTP_CODE ($f)"
-              echo "$BODY"
-              exit 1
-            fi
-            SUMMARY=$(echo "$BODY" | jq -r '.content[0].text')
-
-            if [[ -z "$SUMMARY" || "$SUMMARY" == "null" ]]; then
-              echo "要約の取得に失敗しました: $f"
-              echo "$BODY"
-              exit 1
-            fi
-
-            out="/tmp/summaries/${safe_name}.summary.ja.md"
-            printf '%s\n' "$SUMMARY" > "$out"
-            echo "$out" >> /tmp/summaries/index.txt
-          done < "${{ steps.collect.outputs.files_list }}"
-
-          echo "index=/tmp/summaries/index.txt" >> "$GITHUB_OUTPUT"
-
-      - name: 週次統合要約（日本語）
-        id: merge_ja
-        if: steps.collect.outputs.has_files == 'true'
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: |
-          set -euo pipefail
-
-          MODEL="claude-sonnet-4-6"
-
-          START_DATE="${{ steps.collect.outputs.start_date }}"
-          END_DATE="${{ steps.collect.outputs.end_date }}"
-
-          SYSTEM_PROMPT='あなたは編集者です。複数の「ログ要約」を統合して、週次ブログ生成用の統合サマリを作ってください。
-
-          ## 出力形式（厳守）
-          - 今週の中心テーマ: 1〜3個
-          - ハイライト候補: 2〜4個（なぜ重要かも）
-          - 各ログの短い要約: 各ログにつき3〜6行
-          - 反省/矛盾/未解決: 3〜8個
-          - 来週の問い: 3〜8個
-
-          ## 制約
-          - 断定しすぎない
-          - 美文にしない（素材としての要約）
-          - 秘密情報は含めない
-          '
-
-          printf '%s' "$SYSTEM_PROMPT" > /tmp/summaries/merge_system.txt
-
-          {
-            echo "対象期間: ${START_DATE}〜${END_DATE}"
-            echo
-            echo "以下は各ログの要約です。"
-            echo
-            while IFS= read -r p; do
-              [[ -z "$p" ]] && continue
-              echo "---"
-              echo "要約ファイル: $p"
-              echo
-              cat "$p"
-              echo
-            done < /tmp/summaries/index.txt
-          } > /tmp/summaries/merge_user.txt
-
-          jq -n \
-            --arg model "$MODEL" \
-            --rawfile system /tmp/summaries/merge_system.txt \
-            --rawfile user_content /tmp/summaries/merge_user.txt \
-            '{
-              model: $model,
-              max_tokens: 1600,
-              system: $system,
-              messages: [{"role": "user", "content": $user_content}]
-            }' > /tmp/summaries/merge_request.json
-
-          RESPONSE=$(curl -s -w "\n%{http_code}" \
-            https://api.anthropic.com/v1/messages \
-            -H "x-api-key: $ANTHROPIC_API_KEY" \
-            -H "anthropic-version: 2023-06-01" \
-            -H "content-type: application/json" \
-            -d @/tmp/summaries/merge_request.json)
-          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-          BODY=$(echo "$RESPONSE" | head -n -1)
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "APIエラー: HTTP $HTTP_CODE"
-            echo "$BODY"
-            exit 1
-          fi
-          MERGED=$(echo "$BODY" | jq -r '.content[0].text')
-
-          if [[ -z "$MERGED" || "$MERGED" == "null" ]]; then
-            echo "統合要約の取得に失敗しました"
-            echo "$BODY"
-            exit 1
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
           fi
 
-          printf '%s\n' "$MERGED" > /tmp/summaries/weekly_merged_ja.md
-          echo "merged=/tmp/summaries/weekly_merged_ja.md" >> "$GITHUB_OUTPUT"
+      - name: Create Pull Request
+        if: steps.check.outputs.has_changes == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "📝 Weekly blog post"
+          title: "📝 Weekly Blog Post"
+          body: |
+            This PR contains the automatically generated weekly blog post.
 
-      - name: 日本語ブログ記事を生成（統合要約から）
-        id: generate_ja
-        if: steps.collect.outputs.has_files == 'true'
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: |
-          set -euo pipefail
-
-          MODEL="claude-sonnet-4-6"
-          echo "model=$MODEL"
-
-          START_DATE="${{ steps.collect.outputs.start_date }}"
-          END_DATE="${{ steps.collect.outputs.end_date }}"
-          OUTPUT_DATE="${{ steps.collect.outputs.output_date }}"
-
-          SYSTEM_PROMPT='あなたは、私（masa）の週次ブログ記事を代わりに書くライターです。
-
-          ## 私について
-          - LLMとの議論ログを日常的に残している
-          - 思考が好きで、AIとの対話を通じて新しいインサイトを発見する
-          - 批判的思考と俯瞰的な視点を持っており、自分自身にもAIにも冷静にツッコめる
-
-          ## 記事の構成（この順番で、2000文字以上）
-          1. **導入** - 今週どんなことを考えていたか、何が気になっていたか
-          2. **今週の議論ハイライト** - 特に印象的だった議論を1〜2個ピックアップ
-          3. **気づき・学び** - 議論を通じて得た新しいインサイト。ただし悟ったふりはしない
-          4. **各議論の要約と所感** - 各ログを1〜2段落で要約し、末尾に所感として冷静に批判的に分析し建設的なアイデアとインサイトを示す
-          5. **来週やってみたいこと** - 次のアクションや新たな問い
-
-          ## 文体のルール
-          - ですます調だが、硬くなりすぎない
-          - AIっぽい美文・まとめ感は出さない
-          - 迷いや矛盾があればそのまま残す
-          - 最後に綺麗にまとめない。コンフリクトがあれば示す
-          - 自分自身に対する問題提起を含める
-
-          上記をもとに、noteに投稿するブログ記事を日本語で書いてください。
-          タイトルも考えてください（キャッチーだけど煽りすぎないやつ）。
-          出力はmarkdown形式で、先頭行をタイトル（# タイトル）にしてください。'
-
-          printf '%s' "$SYSTEM_PROMPT" > /tmp/summaries/blog_system_ja.txt
-
-          {
-            echo "以下は今週（${START_DATE}〜${END_DATE}）のログ要約と統合サマリです："
-            echo
-            cat /tmp/summaries/weekly_merged_ja.md
-          } > /tmp/summaries/blog_user_ja.txt
-
-          jq -n \
-            --arg model "$MODEL" \
-            --rawfile system /tmp/summaries/blog_system_ja.txt \
-            --rawfile user_content /tmp/summaries/blog_user_ja.txt \
-            '{
-              model: $model,
-              max_tokens: 4096,
-              system: $system,
-              messages: [{"role": "user", "content": $user_content}]
-            }' > /tmp/summaries/blog_request_ja.json
-
-          RESPONSE=$(curl -s -w "\n%{http_code}" \
-            https://api.anthropic.com/v1/messages \
-            -H "x-api-key: $ANTHROPIC_API_KEY" \
-            -H "anthropic-version: 2023-06-01" \
-            -H "content-type: application/json" \
-            -d @/tmp/summaries/blog_request_ja.json)
-          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-          BODY=$(echo "$RESPONSE" | head -n -1)
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "APIエラー: HTTP $HTTP_CODE"
-            echo "$BODY"
-            exit 1
-          fi
-          BLOG=$(echo "$BODY" | jq -r '.content[0].text')
-
-          if [[ -z "$BLOG" || "$BLOG" == "null" ]]; then
-            echo "ブログ記事の取得に失敗しました"
-            echo "$BODY"
-            exit 1
-          fi
-
-          mkdir -p blog
-          FILENAME="blog/${OUTPUT_DATE}-weekly.md"
-          printf '%s\n' "$BLOG" > "$FILENAME"
-          echo "blog_file=$FILENAME" >> "$GITHUB_OUTPUT"
-          echo "日本語版生成完了: $FILENAME"
-
-      - name: 英語ブログ記事を生成（統合要約から）
-        id: generate_en
-        if: steps.collect.outputs.has_files == 'true'
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: |
-          set -euo pipefail
-
-          MODEL="claude-sonnet-4-6"
-          echo "model=$MODEL"
-
-          START_DATE="${{ steps.collect.outputs.start_date }}"
-          END_DATE="${{ steps.collect.outputs.end_date }}"
-          OUTPUT_DATE="${{ steps.collect.outputs.output_date }}"
-
-          SYSTEM_PROMPT='You are a writer who creates weekly blog posts on behalf of masa.
-
-          ## About masa
-          - Regularly logs discussions with LLMs
-          - Loves thinking deeply, and uses AI conversations to try to grasp something
-          - Has a dry, black sense of humor — can calmly poke fun at both himself and the AI
-          - Casual in conversation, but slightly more polished in writing
-
-          ## Article structure (in this order, 600+ words)
-          1. **Intro** - What masa was thinking about this week, what caught his attention
-          2. **Highlight of the week** - 1–2 particularly memorable discussions
-          3. **Insights & learnings** - What he got out of the discussions. No fake enlightenment.
-          4. **Summary + commentary per discussion** - 1–2 paragraphs summarizing each log, ending with a dry, black-humor remark from masa'"'"'s perspective.
-          5. **What to try next week** - Next actions or questions
-
-          ## Writing style rules
-          - Polite but not stiff
-          - No AI-sounding polished prose or tidy wrap-ups
-          - Leave in doubts and contradictions as-is
-          - Sprinkle in black humor (do not overdo it)
-          - Do not end neatly — life is not like that
-
-          Based on the above, write a blog post in English for posting on note or dev.to.
-          Also come up with a title (catchy but not clickbaity).
-          Output in markdown format, with the title as the first line (# Title).'
-
-          printf '%s' "$SYSTEM_PROMPT" > /tmp/summaries/blog_system_en.txt
-
-          {
-            echo "以下は今週（${START_DATE}〜${END_DATE}）のログ要約と統合サマリです："
-            echo
-            cat /tmp/summaries/weekly_merged_ja.md
-          } > /tmp/summaries/blog_user_en.txt
-
-          jq -n \
-            --arg model "$MODEL" \
-            --rawfile system /tmp/summaries/blog_system_en.txt \
-            --rawfile user_content /tmp/summaries/blog_user_en.txt \
-            '{
-              model: $model,
-              max_tokens: 4096,
-              system: $system,
-              messages: [{"role": "user", "content": $user_content}]
-            }' > /tmp/summaries/blog_request_en.json
-
-          RESPONSE=$(curl -s -w "\n%{http_code}" \
-            https://api.anthropic.com/v1/messages \
-            -H "x-api-key: $ANTHROPIC_API_KEY" \
-            -H "anthropic-version: 2023-06-01" \
-            -H "content-type: application/json" \
-            -d @/tmp/summaries/blog_request_en.json)
-          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-          BODY=$(echo "$RESPONSE" | head -n -1)
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "API error: HTTP $HTTP_CODE"
-            echo "$BODY"
-            exit 1
-          fi
-          BLOG_EN=$(echo "$BODY" | jq -r '.content[0].text')
-
-          if [[ -z "$BLOG_EN" || "$BLOG_EN" == "null" ]]; then
-            echo "English blog post retrieval failed"
-            echo "$BODY"
-            exit 1
-          fi
-
-          mkdir -p blog
-          FILENAME_EN="blog/${OUTPUT_DATE}-weekly-en.md"
-          printf '%s\n' "$BLOG_EN" > "$FILENAME_EN"
-          echo "blog_file_en=$FILENAME_EN" >> "$GITHUB_OUTPUT"
-          echo "英語版生成完了: $FILENAME_EN"
-
-      - name: 生成したブログをリポジトリにコミット
-        if: steps.collect.outputs.has_files == 'true' && (steps.generate_ja.outcome == 'success' || steps.generate_en.outcome == 'success')
-        run: |
-          set -euo pipefail
-
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add blog/
-          if git diff --cached --quiet; then
-            echo "生成されたブログに変更はありません。コミット・プッシュはスキップします。"
-            exit 0
-          fi
-          git commit -m "📝 週次ブログ自動生成 (${{ steps.collect.outputs.start_date }}〜${{ steps.collect.outputs.end_date }})"
-          git push
+            Please review the content before merging.
+          branch: weekly-blog-${{ github.run_id }}
+          delete-branch: true

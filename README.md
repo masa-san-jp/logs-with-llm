@@ -7,7 +7,7 @@
 
 ## Weekly Blog Automation
 
-A GitHub Actions workflow (`weekly-blog.yml`) runs every Monday at 09:00 UTC and
+A GitHub Actions workflow (`weekly-blog.yml`) runs every Friday at 09:00 UTC and
 generates an engaging blog-style post from recent entries in `logs/`.
 Generated posts are saved under `blog/YYYY-MM-DD.md` and opened as a PR for review.
 
@@ -29,14 +29,37 @@ Generated posts are saved under `blog/YYYY-MM-DD.md` and opened as a PR for revi
 
 | Variable | Default | Description |
 |---|---|---|
-| `BLOG_MODE` | `openai` | LLM backend: `openai` or `ollama` |
+| `LLM_PROVIDER` | `openai` | LLM backend: `openai`, `anthropic`, or `ollama` |
 | `BLOG_DAYS` | `7` | Days to look back |
 | `BLOG_DATE` | today UTC | Override output date (`YYYY-MM-DD`) |
 | `OPENAI_API_KEY` | — | Required for `openai` mode (store as GitHub Secret) |
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Override OpenAI-compatible endpoint |
 | `OPENAI_MODEL` | `gpt-5.4-mini` | Model for OpenAI mode |
+| `ANTHROPIC_API_KEY` | — | Required for `anthropic` mode (store as GitHub Secret) |
+| `ANTHROPIC_MODEL` | `claude-sonnet-4-20250514` | Model for Anthropic mode |
 | `OLLAMA_URL` | `http://localhost:11434` | Ollama endpoint |
 | `OLLAMA_MODEL` | `gpt-oss:20b` | Model for Ollama mode |
+
+### Running locally with Anthropic
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+export LLM_PROVIDER=anthropic
+
+python scripts/generate_weekly_blog.py
+```
+
+### Running locally with OpenAI
+
+```bash
+export OPENAI_API_KEY=sk-...
+export OPENAI_MODEL=gpt-5.4-mini
+
+python scripts/generate_weekly_blog.py
+```
+
+You can also point the script at any OpenAI-compatible API (e.g. Azure OpenAI,
+Together AI, Groq) by setting `OPENAI_BASE_URL`.
 
 ### Running locally with Ollama
 
@@ -48,31 +71,19 @@ ollama serve &
 ollama pull gpt-oss:20b
 
 # 3. Run the generator
-BLOG_MODE=ollama python scripts/generate_weekly_blog.py
+LLM_PROVIDER=ollama python scripts/generate_weekly_blog.py
 ```
 
 The new post is written to `blog/YYYY-MM-DD.md`.
 
-### Running locally with an external API
-
-```bash
-export OPENAI_API_KEY=sk-...          # your key
-export OPENAI_MODEL=gpt-5.4-mini       # or any compatible model
-
-python scripts/generate_weekly_blog.py
-```
-
-You can also point the script at any OpenAI-compatible API (e.g. Azure OpenAI,
-Together AI, Groq) by setting `OPENAI_BASE_URL`.
-
 ### Manual workflow dispatch
 
 Go to **Actions → Weekly Blog Generator → Run workflow** in the GitHub UI.
-You can override `blog_mode`, `blog_days`, and `blog_date` inputs before running.
+You can override `llm_provider`, `blog_days`, and `blog_date` inputs before running.
 
 ### Scheduling
 
-The workflow is scheduled via cron (`0 9 * * 1` – every Monday 09:00 UTC).
+The workflow is scheduled via cron (`0 9 * * 5` – every Friday 09:00 UTC).
 To change the schedule, edit `.github/workflows/weekly-blog.yml`.
 
 ### Running tests
@@ -85,13 +96,24 @@ pytest scripts/tests/
 ## Weekly Documentation Goal Automation
 
 A GitHub Actions workflow (`.github/workflows/weekly-doc-goal-issue.yml`) runs every
-week and analyzes the repository documentation as a whole.
+Friday at 09:00 UTC and analyzes the repository documentation as a whole.
 
 It builds an inventory from `README.md`, `prompts/`, `blog/`, and `logs/` (including
 **PDF files** in `logs/`), asks an LLM to identify the most original and challenging
 next goal, and then opens a GitHub issue draft as a regular issue.
 
+### Environment variables / workflow inputs
+
+| Variable | Default | Description |
+|---|---|---|
+| `LLM_PROVIDER` | `openai` | LLM backend: `openai` or `anthropic` |
+| `ISSUE_DATE` | today UTC | Override issue date (`YYYY-MM-DD`) |
+| `OPENAI_API_KEY` | — | Required for `openai` mode |
+| `OPENAI_MODEL` | `gpt-5.4-mini` | Model for OpenAI mode |
+| `ANTHROPIC_API_KEY` | — | Required for `anthropic` mode |
+| `ANTHROPIC_MODEL` | `claude-sonnet-4-20250514` | Model for Anthropic mode |
+
 ### Manual workflow dispatch
 
 Go to **Actions → Weekly Documentation Goal Issue → Run workflow** in the GitHub UI.
-You can override the backend, model, and `issue_date` before running.
+You can override `llm_provider` and `issue_date` before running.

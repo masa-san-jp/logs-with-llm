@@ -25,6 +25,8 @@ permissions:
 jobs:
   create-goal-issue:
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       - name: Checkout repository
@@ -49,7 +51,7 @@ jobs:
           LLM_PROVIDER: ${{ inputs.llm_provider || 'openai' }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL || 'https://api.openai.com/v1' }}
-          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4o-mini' }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-5.4-mini' }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514' }}
         run: |
@@ -90,7 +92,7 @@ jobs:
           else:
               api_key = os.environ.get("OPENAI_API_KEY", "")
               base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
-              model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+              model = os.environ.get("OPENAI_MODEL", "gpt-5.4-mini")
               if not api_key:
                   raise RuntimeError("OPENAI_API_KEY is not set")
 

@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(pip3 install:*)",
+      "Bash(python3 -m pytest:*)",
+      "Bash(git checkout:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(gh pr create --title \"refactor: simplify GitHub Actions workflows\" --body \"$\\(cat <<''EOF''\n## Summary\n- GitHub Actionsワークフローを簡素化\n- 実行スケジュールを毎週金曜日 9:00 UTC に変更\n- LLMプロバイダー選択機能を追加（openai / anthropic）\n- Anthropic Claude Sonnet をサポート\n- READMEに記載のないmeta-analysisワークフローを削除\n\n## Changes\n- `.github/workflows/weekly-blog.yml` - Pythonスクリプトベースに簡素化、Anthropic対応\n- `.github/workflows/weekly-doc-goal-issue.yml` - 同上\n- `scripts/generate_weekly_blog.py` - anthropicモードを追加\n- 削除: `meta-analysis.yml`, `meta_analysis.py`, 関連テスト\n\n## Environment Variables\n| 名前 | 説明 |\n|------|------|\n| `LLM_PROVIDER` | openai \\\\| anthropic \\\\| ollama |\n| `ANTHROPIC_API_KEY` | Anthropicモード用 |\n| `ANTHROPIC_MODEL` | デフォルト: `claude-sonnet-4-20250514` |\n\n## Test plan\n- [x] pytest 34件 全てPass\n- [ ] GitHub Actionsで手動実行テスト\n\n🤖 Generated with [Claude Code]\\(https://claude.com/code\\)\nEOF\n\\)\")",
+      "WebFetch(domain:github.com)"
+    ]
+  }
+}

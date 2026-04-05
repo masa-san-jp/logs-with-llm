@@ -41,7 +41,7 @@ Generated posts are saved under `blog/YYYY-MM-DD.md` and opened as a PR for revi
 | `BLOG_DATE` | today UTC | Override output date (`YYYY-MM-DD`) |
 | `OPENAI_API_KEY` | — | Required for `openai` mode (store as GitHub Secret) |
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Override OpenAI-compatible endpoint |
-| `OPENAI_MODEL` | `gpt-4o-mini` | Model for OpenAI mode |
+| `OPENAI_MODEL` | `gpt-5.4-mini` | Model for OpenAI mode |
 | `ANTHROPIC_API_KEY` | — | Required for `anthropic` mode (store as GitHub Secret) |
 | `ANTHROPIC_MODEL` | `claude-sonnet-4-20250514` | Model for Anthropic mode |
 | `OLLAMA_URL` | `http://localhost:11434` | Ollama endpoint |
@@ -60,7 +60,7 @@ python scripts/generate_weekly_blog.py
 
 ```bash
 export OPENAI_API_KEY=sk-...
-export OPENAI_MODEL=gpt-4o-mini
+export OPENAI_MODEL=gpt-5.4-mini
 
 python scripts/generate_weekly_blog.py
 ```
@@ -116,7 +116,7 @@ next goal, and then opens a GitHub issue draft as a regular issue.
 | `LLM_PROVIDER` | `openai` | LLM backend: `openai` or `anthropic` |
 | `ISSUE_DATE` | today UTC | Override issue date (`YYYY-MM-DD`) |
 | `OPENAI_API_KEY` | — | Required for `openai` mode |
-| `OPENAI_MODEL` | `gpt-4o-mini` | Model for OpenAI mode |
+| `OPENAI_MODEL` | `gpt-5.4-mini` | Model for OpenAI mode |
 | `ANTHROPIC_API_KEY` | — | Required for `anthropic` mode |
 | `ANTHROPIC_MODEL` | `claude-sonnet-4-20250514` | Model for Anthropic mode |
 

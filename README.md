@@ -41,9 +41,9 @@ Generated posts are saved under `blog/YYYY-MM-DD.md` and opened as a PR for revi
 | `BLOG_DATE` | today UTC | Override output date (`YYYY-MM-DD`) |
 | `OPENAI_API_KEY` | — | Required for `openai` mode (store as GitHub Secret) |
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Override OpenAI-compatible endpoint |
-| `OPENAI_MODEL` | `gpt-4o-mini` | Model for OpenAI mode |
+| `OPENAI_MODEL` | `gpt-5.4-mini` | Model for OpenAI mode |
 | `OLLAMA_URL` | `http://localhost:11434` | Ollama endpoint |
-| `OLLAMA_MODEL` | `llama3` | Model for Ollama mode |
+| `OLLAMA_MODEL` | `gpt-oss:20b` | Model for Ollama mode |
 
 ### Running locally with Ollama
 
@@ -52,7 +52,7 @@ Generated posts are saved under `blog/YYYY-MM-DD.md` and opened as a PR for revi
 ollama serve &
 
 # 2. Pull the model once
-ollama pull llama3
+ollama pull gpt-oss:20b
 
 # 3. Run the generator
 BLOG_MODE=ollama python scripts/generate_weekly_blog.py
@@ -64,7 +64,7 @@ The new post is written to `blog/YYYY-MM-DD.md`.
 
 ```bash
 export OPENAI_API_KEY=sk-...          # your key
-export OPENAI_MODEL=gpt-4o-mini       # or any compatible model
+export OPENAI_MODEL=gpt-5.4-mini       # or any compatible model
 
 python scripts/generate_weekly_blog.py
 ```

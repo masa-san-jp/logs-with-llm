@@ -43,7 +43,7 @@ jobs:
       - name: Generate issue prompt
         env:
           ISSUE_DATE: ${{ inputs.issue_date || '' }}
-        run: python scripts/generate_weekly_goal_issue.py > /tmp/issue_prompt.md
+        run: python scripts/generate_weekly_goal_issue.py > /tmp/issue_prompt.txt
 
       - name: Call LLM to generate issue content
         id: llm
@@ -62,7 +62,7 @@ jobs:
           from pathlib import Path
 
           provider = os.environ.get("LLM_PROVIDER", "openai").lower()
-          prompt = Path("/tmp/issue_prompt.md").read_text(encoding="utf-8")
+          prompt = Path("/tmp/issue_prompt.txt").read_text(encoding="utf-8")
 
           if provider == "anthropic":
               api_key = os.environ.get("ANTHROPIC_API_KEY", "")

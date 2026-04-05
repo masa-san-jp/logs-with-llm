@@ -4,28 +4,32 @@ Weekly blog post generator for decision-logs-with-llm.
 
 Reads logs under `logs/`, selects entries from the past BLOG_DAYS days based on
 yyyymmdd tokens in their paths, and generates an engaging blog-style Markdown post
-under `blog/YYYY-MM-DD.md` using either an OpenAI-compatible API or a local Ollama
-endpoint.
+under `blog/YYYY-MM-DD.md` using OpenAI, Anthropic, or Ollama.
 
 Usage:
     # OpenAI mode (default)
     OPENAI_API_KEY=sk-... python scripts/generate_weekly_blog.py
 
+    # Anthropic mode
+    LLM_PROVIDER=anthropic ANTHROPIC_API_KEY=sk-... python scripts/generate_weekly_blog.py
+
     # Ollama mode
-    BLOG_MODE=ollama python scripts/generate_weekly_blog.py
+    LLM_PROVIDER=ollama python scripts/generate_weekly_blog.py
 
 Environment variables:
-    BLOG_MODE       openai | ollama (default: openai)
-    BLOG_DAYS       number of days to look back (default: 7)
-    OPENAI_API_KEY  required for openai mode
-    OPENAI_BASE_URL optional; override base URL (default: https://api.openai.com/v1)
-    OPENAI_MODEL    model name for openai mode (default: gpt-4o-mini)
-    OLLAMA_URL      Ollama endpoint (default: http://localhost:11434)
-    OLLAMA_MODEL    model name for ollama mode (default: llama3)
-    BLOG_DATE       override output date (YYYY-MM-DD); default: today UTC
-    LOGS_DIR        path to logs directory (default: logs)
-    BLOG_DIR        path to blog directory (default: blog)
-    STATE_FILE      path to state JSON file (default: .blog_state.json)
+    LLM_PROVIDER      openai | anthropic | ollama (default: openai)
+    BLOG_DAYS         number of days to look back (default: 7)
+    OPENAI_API_KEY    required for openai mode
+    OPENAI_BASE_URL   optional; override base URL (default: https://api.openai.com/v1)
+    OPENAI_MODEL      model name for openai mode (default: gpt-4o-mini)
+    ANTHROPIC_API_KEY required for anthropic mode
+    ANTHROPIC_MODEL   model name for anthropic mode (default: claude-sonnet-4-20250514)
+    OLLAMA_URL        Ollama endpoint (default: http://localhost:11434)
+    OLLAMA_MODEL      model name for ollama mode (default: llama3)
+    BLOG_DATE         override output date (YYYY-MM-DD); default: today UTC
+    LOGS_DIR          path to logs directory (default: logs)
+    BLOG_DIR          path to blog directory (default: blog)
+    STATE_FILE        path to state JSON file (default: .blog_state.json)
 """
 
 import json
@@ -44,11 +48,13 @@ from typing import Optional
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-BLOG_MODE = os.environ.get("BLOG_MODE", "openai").lower()
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "openai").lower()
 BLOG_DAYS = int(os.environ.get("BLOG_DAYS", "7"))
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434").rstrip("/")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3")
 LOGS_DIR = REPO_ROOT / os.environ.get("LOGS_DIR", "logs")
@@ -256,7 +262,7 @@ def _call_openai(prompt: str) -> str:
 
     if not OPENAI_API_KEY:
         raise RuntimeError(
-            "OPENAI_API_KEY is not set. Set the environment variable or switch to BLOG_MODE=ollama."
+            "OPENAI_API_KEY is not set. Set the environment variable or switch to LLM_PROVIDER=ollama."
         )
 
     payload = json.dumps(
@@ -279,6 +285,37 @@ def _call_openai(prompt: str) -> str:
     with urllib.request.urlopen(req, timeout=120) as resp:
         body = json.loads(resp.read())
     return body["choices"][0]["message"]["content"]
+
+
+def _call_anthropic(prompt: str) -> str:
+    import urllib.request
+
+    if not ANTHROPIC_API_KEY:
+        raise RuntimeError(
+            "ANTHROPIC_API_KEY is not set. Set the environment variable or switch to LLM_PROVIDER=openai."
+        )
+
+    payload = json.dumps(
+        {
+            "model": ANTHROPIC_MODEL,
+            "max_tokens": 4096,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+    ).encode()
+
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages",
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "x-api-key": ANTHROPIC_API_KEY,
+            "anthropic-version": "2023-06-01",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=120) as resp:
+        body = json.loads(resp.read())
+    return body["content"][0]["text"]
 
 
 def _call_ollama(prompt: str) -> str:
@@ -304,7 +341,10 @@ def _call_ollama(prompt: str) -> str:
 
 
 def generate_blog_content(prompt: str) -> str:
-    if BLOG_MODE == "ollama":
+    if LLM_PROVIDER == "anthropic":
+        print(f"[generate_weekly_blog] Using Anthropic (model={ANTHROPIC_MODEL})")
+        return _call_anthropic(prompt)
+    elif LLM_PROVIDER == "ollama":
         print(f"[generate_weekly_blog] Using Ollama ({OLLAMA_URL}, model={OLLAMA_MODEL})")
         return _call_ollama(prompt)
     else:
@@ -354,7 +394,7 @@ def main() -> None:
 
     print(
         f"[generate_weekly_blog] date={post_date}  window={window_start}..{window_end}"
-        f"  mode={BLOG_MODE}"
+        f"  provider={LLM_PROVIDER}"
     )
 
     # Collect logs

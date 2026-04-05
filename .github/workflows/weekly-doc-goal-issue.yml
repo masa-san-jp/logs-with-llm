@@ -2,11 +2,19 @@ name: Weekly Documentation Goal Issue
 
 on:
   schedule:
-    - cron: '0 9 * * 1'  # 毎週月曜 9:00 UTC（日本時間18:00）
+    - cron: '0 9 * * 5'  # 毎週金曜 9:00 UTC
   workflow_dispatch:
     inputs:
+      llm_provider:
+        description: "LLM provider: openai or anthropic"
+        required: false
+        default: "openai"
+        type: choice
+        options:
+          - openai
+          - anthropic
       issue_date:
-        description: "Override issue date (YYYY-MM-DD, default: today UTC)"
+        description: "Override issue date (YYYY-MM-DD)"
         required: false
         default: ""
 
@@ -15,122 +23,129 @@ permissions:
   issues: write
 
 jobs:
-  create-weekly-goal-issue:
+  create-goal-issue:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      issues: write
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
-      - name: リポジトリをチェックアウト
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: 依存ツールのインストール
-        run: sudo apt-get update -y && sudo apt-get install -y jq curl
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
 
-      - name: Python 依存パッケージのインストール
+      - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: issue 用のドキュメント分析プロンプトを生成
+      - name: Generate issue prompt
         env:
-          ISSUE_DATE: ${{ inputs.issue_date }}
-        run: |
-          set -euo pipefail
-          python scripts/generate_weekly_goal_issue.py > /tmp/weekly_goal_issue_prompt.txt
-          wc -c /tmp/weekly_goal_issue_prompt.txt
+          ISSUE_DATE: ${{ inputs.issue_date || '' }}
+        run: python scripts/generate_weekly_goal_issue.py > /tmp/issue_prompt.txt
 
-      - name: LLM で issue 草案を生成
-        id: draft
+      - name: Call LLM to generate issue content
+        id: llm
         env:
+          LLM_PROVIDER: ${{ inputs.llm_provider || 'openai' }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL || 'https://api.openai.com/v1' }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4o-mini' }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514' }}
         run: |
-          set -euo pipefail
+          python - <<'EOF'
+          import json
+          import os
+          import urllib.request
+          from pathlib import Path
 
-          MODEL="claude-sonnet-4-6"
-          echo "model=$MODEL"
+          provider = os.environ.get("LLM_PROVIDER", "openai").lower()
+          prompt = Path("/tmp/issue_prompt.txt").read_text(encoding="utf-8")
 
-          SYSTEM_PROMPT='あなたは GitHub Issue の起票担当者です。
-          レポジトリのドキュメント全体を俯瞰したうえで、次に取り組むべき独創的でチャレンジングな目標を 1 件だけ提案してください。
-          出力形式はユーザープロンプトに厳密に従ってください。'
+          if provider == "anthropic":
+              api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+              model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+              if not api_key:
+                  raise RuntimeError("ANTHROPIC_API_KEY is not set")
 
-          printf '%s' "$SYSTEM_PROMPT" > /tmp/weekly_goal_issue_system.txt
+              payload = json.dumps({
+                  "model": model,
+                  "max_tokens": 4096,
+                  "messages": [{"role": "user", "content": prompt}],
+              }).encode()
 
-          jq -n \
-            --arg model "$MODEL" \
-            --rawfile system /tmp/weekly_goal_issue_system.txt \
-            --rawfile user_content /tmp/weekly_goal_issue_prompt.txt \
-            '{
-              model: $model,
-              max_tokens: 1800,
-              system: $system,
-              messages: [{"role": "user", "content": $user_content}]
-            }' > /tmp/weekly_goal_issue_request.json
+              req = urllib.request.Request(
+                  "https://api.anthropic.com/v1/messages",
+                  data=payload,
+                  headers={
+                      "Content-Type": "application/json",
+                      "x-api-key": api_key,
+                      "anthropic-version": "2023-06-01",
+                  },
+                  method="POST",
+              )
+              with urllib.request.urlopen(req, timeout=120) as resp:
+                  body = json.loads(resp.read())
+              content = body["content"][0]["text"]
+          else:
+              api_key = os.environ.get("OPENAI_API_KEY", "")
+              base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+              model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+              if not api_key:
+                  raise RuntimeError("OPENAI_API_KEY is not set")
 
-          RESPONSE=$(curl -s -w "\n%{http_code}" \
-            https://api.anthropic.com/v1/messages \
-            -H "x-api-key: $ANTHROPIC_API_KEY" \
-            -H "anthropic-version: 2023-06-01" \
-            -H "content-type: application/json" \
-            -d @/tmp/weekly_goal_issue_request.json)
-          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-          BODY=$(echo "$RESPONSE" | head -n -1)
-          if [[ "$HTTP_CODE" != "200" ]]; then
-            echo "APIエラー: HTTP $HTTP_CODE"
-            echo "$BODY"
+              payload = json.dumps({
+                  "model": model,
+                  "messages": [{"role": "user", "content": prompt}],
+                  "temperature": 0.7,
+              }).encode()
+
+              req = urllib.request.Request(
+                  f"{base_url}/chat/completions",
+                  data=payload,
+                  headers={
+                      "Content-Type": "application/json",
+                      "Authorization": f"Bearer {api_key}",
+                  },
+                  method="POST",
+              )
+              with urllib.request.urlopen(req, timeout=120) as resp:
+                  body = json.loads(resp.read())
+              content = body["choices"][0]["message"]["content"]
+
+          Path("/tmp/issue_content.md").write_text(content, encoding="utf-8")
+          EOF
+
+      - name: Parse issue title and body
+        id: parse
+        run: |
+          TITLE=$(grep -m1 '^# ' /tmp/issue_content.md | sed 's/^# //')
+          if [ -z "$TITLE" ]; then
+            echo "Failed to extract issue title"
+            cat /tmp/issue_content.md
             exit 1
           fi
-          ISSUE_MD=$(echo "$BODY" | jq -r '.content[0].text')
+          echo "title=$TITLE" >> "$GITHUB_OUTPUT"
+          tail -n +2 /tmp/issue_content.md > /tmp/issue_body.md
 
-          if [[ -z "$ISSUE_MD" || "$ISSUE_MD" == "null" ]]; then
-            echo "Issue 草案の生成に失敗しました"
-            exit 1
-          fi
-
-          printf '%s\n' "$ISSUE_MD" > /tmp/weekly_goal_issue.md
-          TITLE=$(sed -n 's/^# //p' /tmp/weekly_goal_issue.md | head -n 1)
-          if [[ -z "$TITLE" ]]; then
-            echo "Issue title を抽出できませんでした"
-            cat /tmp/weekly_goal_issue.md
-            exit 1
-          fi
-
-          {
-            echo "title<<EOF"
-            echo "$TITLE"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: 既存 issue を確認して新規作成
+      - name: Check for existing issue
+        id: check
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -euo pipefail
-
-          TITLE="${{ steps.draft.outputs.title }}"
-          ISSUES_API="https://api.github.com/repos/${{ github.repository }}/issues"
-          tail -n +2 /tmp/weekly_goal_issue.md > /tmp/weekly_goal_issue_body.md
-
-          EXISTING=$(curl -fsS \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "$ISSUES_API?state=open&per_page=100")
-
-          MATCH_COUNT=$(printf '%s' "$EXISTING" | jq --arg title "$TITLE" '[.[] | select(.pull_request | not) | select(.title == $title)] | length')
-          if [[ "$MATCH_COUNT" != "0" ]]; then
-            echo "同名の open issue が既に存在するため、作成をスキップします: $TITLE"
-            exit 0
+          TITLE="${{ steps.parse.outputs.title }}"
+          EXISTING=$(gh issue list --state open --json title --jq '.[].title')
+          if echo "$EXISTING" | grep -qF "$TITLE"; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-          jq -n \
-            --arg title "$TITLE" \
-            --rawfile body /tmp/weekly_goal_issue_body.md \
-            '{title: $title, body: $body}' > /tmp/create_weekly_goal_issue.json
-
-          curl -fsS -X POST \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            -H "Content-Type: application/json" \
-            "$ISSUES_API" \
-            -d @/tmp/create_weekly_goal_issue.json
+      - name: Create GitHub Issue
+        if: steps.check.outputs.exists == 'false'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create \
+            --title "${{ steps.parse.outputs.title }}" \
+            --body-file /tmp/issue_body.md

@@ -24,7 +24,6 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
 
 jobs:
   generate-blog:
@@ -65,16 +64,11 @@ jobs:
             echo "has_changes=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Create Pull Request
+      - name: Commit and push blog post
         if: steps.check.outputs.has_changes == 'true'
-        uses: peter-evans/create-pull-request@v6
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: "📝 Weekly blog post"
-          title: "📝 Weekly Blog Post"
-          body: |
-            This PR contains the automatically generated weekly blog post.
-
-            Please review the content before merging.
-          branch: weekly-blog-${{ github.run_id }}
-          delete-branch: true
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add blog/ .blog_state.json
+          git commit -m "📝 Weekly blog post"
+          git push origin HEAD:main

@@ -66,6 +66,12 @@ DATE_RE = re.compile(r"\b(20\d{2})(\d{2})(\d{2})\b")
 SUPPORTED_LANGUAGES = ("ja", "en")
 
 
+def validate_language(language: str) -> str:
+    if language not in SUPPORTED_LANGUAGES:
+        raise ValueError(f"Unsupported language: {language}")
+    return language
+
+
 # ---------------------------------------------------------------------------
 # Date helpers
 # ---------------------------------------------------------------------------
@@ -199,18 +205,18 @@ def read_log_files(files: list[Path]) -> str:
 # ---------------------------------------------------------------------------
 
 def blog_output_path(post_date: date, language: str) -> Path:
+    language = validate_language(language)
     date_token = post_date.strftime("%Y%m%d")
     if language == "ja":
         filename = f"{date_token}-weekly.md"
-    elif language == "en":
-        filename = f"{date_token}-weekly-en.md"
     else:
-        raise ValueError(f"Unsupported language: {language}")
+        filename = f"{date_token}-weekly-en.md"
     return BLOG_DIR / filename
 
 
 def find_previous_blog(language: str) -> Optional[Path]:
     """Return the most recent blog post file for the requested language, or None."""
+    language = validate_language(language)
     pattern = "*-weekly.md" if language == "ja" else "*-weekly-en.md"
     posts = sorted(BLOG_DIR.glob(pattern), reverse=True)
     return posts[0] if posts else None
@@ -231,6 +237,7 @@ def read_previous_blog(language: str) -> str:
 # ---------------------------------------------------------------------------
 
 def build_prompt(logs_text: str, prev_blog: str, post_date: date, language: str) -> str:
+    language = validate_language(language)
     date_str = post_date.strftime("%Y-%m-%d")
     prev_section = ""
     if prev_blog:
@@ -247,15 +254,13 @@ def build_prompt(logs_text: str, prev_blog: str, post_date: date, language: str)
             "- Keep the tone curious and reflective, not corporate.\n"
             "- Total length: around 600–900 words."
         )
-    elif language == "en":
+    else:
         language_guidance = (
             "- Write in first person, in English (the logs may be in Japanese; translate and interpret).\n"
             "- Be specific: mention project names, tools, and concrete outcomes.\n"
             "- Keep the tone curious and reflective, not corporate.\n"
             "- Total length: around 600–900 words."
         )
-    else:
-        raise ValueError(f"Unsupported language: {language}")
 
     return f"""You are a thoughtful technical blogger writing a weekly update about AI and software experiments.
 Today is {date_str}.

@@ -59,10 +59,10 @@ jobs:
       - name: Check for changes
         id: check
         run: |
-          if git diff --quiet blog/; then
-            echo "has_changes=false" >> "$GITHUB_OUTPUT"
-          else
+          if git status --porcelain blog/ | grep -q .; then
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Create Pull Request

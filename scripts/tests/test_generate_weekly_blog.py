@@ -114,31 +114,54 @@ class TestCollectLogFiles:
 # ---------------------------------------------------------------------------
 
 class TestFindPreviousBlog:
-    def test_returns_most_recent(self, tmp_path):
+    def test_returns_most_recent_japanese_post(self, tmp_path):
         blog_dir = tmp_path / "blog"
         blog_dir.mkdir()
-        (blog_dir / "2026-02-01.md").write_text("old")
-        (blog_dir / "2026-03-01.md").write_text("newer")
-        (blog_dir / "2026-01-15.md").write_text("oldest")
+        (blog_dir / "20260201-weekly.md").write_text("old")
+        (blog_dir / "20260301-weekly.md").write_text("newer")
+        (blog_dir / "20260115-weekly.md").write_text("oldest")
+        (blog_dir / "20260401-weekly-en.md").write_text("english")
 
         with mock.patch.object(gen, "BLOG_DIR", blog_dir):
-            result = gen.find_previous_blog()
+            result = gen.find_previous_blog("ja")
         assert result is not None
-        assert result.name == "2026-03-01.md"
+        assert result.name == "20260301-weekly.md"
+
+    def test_returns_most_recent_english_post(self, tmp_path):
+        blog_dir = tmp_path / "blog"
+        blog_dir.mkdir()
+        (blog_dir / "20260301-weekly.md").write_text("japanese")
+        (blog_dir / "20260201-weekly-en.md").write_text("old")
+        (blog_dir / "20260315-weekly-en.md").write_text("newer")
+
+        with mock.patch.object(gen, "BLOG_DIR", blog_dir):
+            result = gen.find_previous_blog("en")
+        assert result is not None
+        assert result.name == "20260315-weekly-en.md"
 
     def test_returns_none_when_empty(self, tmp_path):
         blog_dir = tmp_path / "blog"
         blog_dir.mkdir()
         with mock.patch.object(gen, "BLOG_DIR", blog_dir):
-            assert gen.find_previous_blog() is None
+            assert gen.find_previous_blog("ja") is None
 
     def test_read_previous_blog_content(self, tmp_path):
         blog_dir = tmp_path / "blog"
         blog_dir.mkdir()
-        (blog_dir / "2026-03-01.md").write_text("# Post\nHello world")
+        (blog_dir / "20260301-weekly.md").write_text("# Post\nHello world")
         with mock.patch.object(gen, "BLOG_DIR", blog_dir):
-            content = gen.read_previous_blog()
+            content = gen.read_previous_blog("ja")
         assert "Hello world" in content
+
+
+class TestBlogOutputPath:
+    def test_japanese_filename(self, tmp_path):
+        with mock.patch.object(gen, "BLOG_DIR", tmp_path / "blog"):
+            assert gen.blog_output_path(date(2026, 3, 10), "ja").name == "20260310-weekly.md"
+
+    def test_english_filename(self, tmp_path):
+        with mock.patch.object(gen, "BLOG_DIR", tmp_path / "blog"):
+            assert gen.blog_output_path(date(2026, 3, 10), "en").name == "20260310-weekly-en.md"
 
 
 # ---------------------------------------------------------------------------
@@ -147,25 +170,29 @@ class TestFindPreviousBlog:
 
 class TestBuildPrompt:
     def test_contains_date(self):
-        prompt = gen.build_prompt("some logs", "", date(2026, 3, 10))
+        prompt = gen.build_prompt("some logs", "", date(2026, 3, 10), "en")
         assert "2026-03-10" in prompt
 
     def test_contains_logs(self):
-        prompt = gen.build_prompt("MY_SPECIAL_LOG_CONTENT", "", date(2026, 3, 10))
+        prompt = gen.build_prompt("MY_SPECIAL_LOG_CONTENT", "", date(2026, 3, 10), "en")
         assert "MY_SPECIAL_LOG_CONTENT" in prompt
 
     def test_includes_previous_blog(self):
-        prompt = gen.build_prompt("logs", "PREV_BLOG_CONTENT", date(2026, 3, 10))
+        prompt = gen.build_prompt("logs", "PREV_BLOG_CONTENT", date(2026, 3, 10), "en")
         assert "PREV_BLOG_CONTENT" in prompt
 
     def test_no_previous_blog(self):
-        prompt = gen.build_prompt("logs", "", date(2026, 3, 10))
+        prompt = gen.build_prompt("logs", "", date(2026, 3, 10), "en")
         assert "Previous blog post" not in prompt
 
     def test_required_sections_present(self):
-        prompt = gen.build_prompt("logs", "prev", date(2026, 3, 10))
+        prompt = gen.build_prompt("logs", "prev", date(2026, 3, 10), "en")
         for section in ["Highlights", "What I Worked On", "Decisions", "Progress Since Last Time", "What's Next"]:
             assert section in prompt
+
+    def test_japanese_prompt_requests_japanese_output(self):
+        prompt = gen.build_prompt("logs", "", date(2026, 3, 10), "ja")
+        assert "Write in first person, in Japanese." in prompt
 
 
 # ---------------------------------------------------------------------------

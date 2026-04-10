@@ -9,7 +9,8 @@
 
 A GitHub Actions workflow (`weekly-blog.yml`) runs every Friday at 09:00 UTC and
 generates an engaging blog-style post from recent entries in `logs/`.
-Generated posts are saved under `blog/YYYY-MM-DD.md` and opened as a PR for review.
+Generated posts are saved under `blog/yyyymmdd-weekly.md` (Japanese) and
+`blog/yyyymmdd-weekly-en.md` (English) and opened as a PR for review.
 
 ### How it works
 
@@ -23,7 +24,7 @@ Generated posts are saved under `blog/YYYY-MM-DD.md` and opened as a PR for revi
 4. The previous blog post in `blog/` is read as context so the new post can
    describe what changed since last time.
 5. A prompt is sent to the configured LLM backend, and the response is written to
-   `blog/YYYY-MM-DD.md`.
+   `blog/yyyymmdd-weekly.md` and `blog/yyyymmdd-weekly-en.md`.
 
 ### Environment variables / workflow inputs
 
@@ -74,7 +75,8 @@ ollama pull gpt-oss:20b
 LLM_PROVIDER=ollama python scripts/generate_weekly_blog.py
 ```
 
-The new post is written to `blog/YYYY-MM-DD.md`.
+The new posts are written to `blog/yyyymmdd-weekly.md` and
+`blog/yyyymmdd-weekly-en.md`.
 
 ### Manual workflow dispatch
 

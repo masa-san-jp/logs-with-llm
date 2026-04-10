@@ -3,8 +3,9 @@
 Weekly blog post generator for decision-logs-with-llm.
 
 Reads logs under `logs/`, selects entries from the past BLOG_DAYS days based on
-yyyymmdd tokens in their paths, and generates an engaging blog-style Markdown post
-under `blog/YYYY-MM-DD.md` using OpenAI, Anthropic, or Ollama.
+yyyymmdd tokens in their paths, and generates bilingual blog-style Markdown posts
+under `blog/yyyymmdd-weekly.md` and `blog/yyyymmdd-weekly-en.md` using OpenAI,
+Anthropic, or Ollama.
 
 Usage:
     # OpenAI mode (default)
@@ -62,6 +63,13 @@ BLOG_DIR = REPO_ROOT / os.environ.get("BLOG_DIR", "blog")
 STATE_FILE = REPO_ROOT / os.environ.get("STATE_FILE", ".blog_state.json")
 
 DATE_RE = re.compile(r"\b(20\d{2})(\d{2})(\d{2})\b")
+SUPPORTED_LANGUAGES = ("ja", "en")
+
+
+def validate_language(language: str) -> str:
+    if language not in SUPPORTED_LANGUAGES:
+        raise ValueError(f"Unsupported language: {language}")
+    return language
 
 
 # ---------------------------------------------------------------------------
@@ -193,17 +201,29 @@ def read_log_files(files: list[Path]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Previous blog context
+# Previous blog context / output paths
 # ---------------------------------------------------------------------------
 
-def find_previous_blog() -> Optional[Path]:
-    """Return the most recent blog post file, or None."""
-    posts = sorted(BLOG_DIR.glob("*.md"), reverse=True)
+def blog_output_path(post_date: date, language: str) -> Path:
+    language = validate_language(language)
+    date_token = post_date.strftime("%Y%m%d")
+    if language == "ja":
+        filename = f"{date_token}-weekly.md"
+    else:
+        filename = f"{date_token}-weekly-en.md"
+    return BLOG_DIR / filename
+
+
+def find_previous_blog(language: str) -> Optional[Path]:
+    """Return the most recent blog post file for the requested language, or None."""
+    language = validate_language(language)
+    pattern = "*-weekly.md" if language == "ja" else "*-weekly-en.md"
+    posts = sorted(BLOG_DIR.glob(pattern), reverse=True)
     return posts[0] if posts else None
 
 
-def read_previous_blog() -> str:
-    post = find_previous_blog()
+def read_previous_blog(language: str) -> str:
+    post = find_previous_blog(language)
     if post is None:
         return ""
     try:
@@ -216,7 +236,8 @@ def read_previous_blog() -> str:
 # Prompt construction
 # ---------------------------------------------------------------------------
 
-def build_prompt(logs_text: str, prev_blog: str, post_date: date) -> str:
+def build_prompt(logs_text: str, prev_blog: str, post_date: date, language: str) -> str:
+    language = validate_language(language)
     date_str = post_date.strftime("%Y-%m-%d")
     prev_section = ""
     if prev_blog:
@@ -225,6 +246,21 @@ def build_prompt(logs_text: str, prev_blog: str, post_date: date) -> str:
 
 {prev_blog}
 """
+
+    if language == "ja":
+        language_guidance = (
+            "- Write in first person, in Japanese.\n"
+            "- Keep project names, tool names, and code identifiers accurate; leave them in English where natural.\n"
+            "- Keep the tone curious and reflective, not corporate.\n"
+            "- Total length: around 600–900 words."
+        )
+    else:
+        language_guidance = (
+            "- Write in first person, in English (the logs may be in Japanese; translate and interpret).\n"
+            "- Be specific: mention project names, tools, and concrete outcomes.\n"
+            "- Keep the tone curious and reflective, not corporate.\n"
+            "- Total length: around 600–900 words."
+        )
 
     return f"""You are a thoughtful technical blogger writing a weekly update about AI and software experiments.
 Today is {date_str}.
@@ -242,10 +278,7 @@ Required structure:
 7. `## What's Next` — a forward-looking section
 
 Guidelines:
-- Write in first person, in English (the logs may be in Japanese; translate and interpret).
-- Be specific: mention project names, tools, and concrete outcomes.
-- Keep the tone curious and reflective, not corporate.
-- Total length: around 600–900 words.
+{language_guidance}
 {prev_section}
 ## This week's decision logs
 
@@ -410,23 +443,24 @@ def main() -> None:
         print(f"[generate_weekly_blog] Found {len(log_files)} log file(s).")
         logs_text = read_log_files(log_files)
 
-    prev_blog = read_previous_blog()
-    if prev_blog:
-        prev_post = find_previous_blog()
-        print(f"[generate_weekly_blog] Using previous blog post: {prev_post.name}")
-    else:
-        print("[generate_weekly_blog] No previous blog post found.")
-
-    prompt = build_prompt(logs_text, prev_blog, post_date)
-
-    # Generate content
-    content = generate_blog_content(prompt)
-
-    # Write output
     BLOG_DIR.mkdir(parents=True, exist_ok=True)
-    output_path = BLOG_DIR / f"{post_date.isoformat()}.md"
-    output_path.write_text(content + "\n", encoding="utf-8")
-    print(f"[generate_weekly_blog] Written: {output_path.relative_to(REPO_ROOT)}")
+    for language in SUPPORTED_LANGUAGES:
+        prev_blog = read_previous_blog(language)
+        if prev_blog:
+            prev_post = find_previous_blog(language)
+            print(f"[generate_weekly_blog] Using previous {language} blog post: {prev_post.name}")
+        else:
+            print(f"[generate_weekly_blog] No previous {language} blog post found.")
+
+        prompt = build_prompt(logs_text, prev_blog, post_date, language)
+
+        # Generate content
+        content = generate_blog_content(prompt)
+
+        # Write output
+        output_path = blog_output_path(post_date, language)
+        output_path.write_text(content + "\n", encoding="utf-8")
+        print(f"[generate_weekly_blog] Written: {output_path.relative_to(REPO_ROOT)}")
 
     # Update state
     _save_state(post_date)

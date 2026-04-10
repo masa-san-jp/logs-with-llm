@@ -63,6 +63,7 @@ BLOG_DIR = REPO_ROOT / os.environ.get("BLOG_DIR", "blog")
 STATE_FILE = REPO_ROOT / os.environ.get("STATE_FILE", ".blog_state.json")
 
 DATE_RE = re.compile(r"\b(20\d{2})(\d{2})(\d{2})\b")
+SUPPORTED_LANGUAGES = ("ja", "en")
 
 
 # ---------------------------------------------------------------------------
@@ -438,7 +439,7 @@ def main() -> None:
         logs_text = read_log_files(log_files)
 
     BLOG_DIR.mkdir(parents=True, exist_ok=True)
-    for language in ("ja", "en"):
+    for language in SUPPORTED_LANGUAGES:
         prev_blog = read_previous_blog(language)
         if prev_blog:
             prev_post = find_previous_blog(language)

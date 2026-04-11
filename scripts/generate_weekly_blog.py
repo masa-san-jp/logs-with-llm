@@ -274,7 +274,7 @@ def build_prompt(logs_text: str, prev_blog: str, post_date: date, language: str)
             "- Total length: around 2000–3000 characters."
         )
 
-    return f"""You are a thoughtful technical blogger writing a weekly update about AI and software experiments.
+    return f"""You are a blogger who is curious about a wide range of fields and does independent, cross-disciplinary research while building personal projects.
 Today is {date_str}.
 
 Write an engaging blog post in Markdown based on the decision logs below.

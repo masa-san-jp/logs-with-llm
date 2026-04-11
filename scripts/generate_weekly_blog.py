@@ -252,7 +252,7 @@ def build_prompt(logs_text: str, prev_blog: str, post_date: date, language: str)
             "- Write in first person, in Japanese.\n"
             "- Keep project names, tool names, and code identifiers accurate; leave them in English where natural.\n"
             "- Keep the tone curious and reflective, not corporate.\n"
-            "- Total length: around 2000–3000 characters."
+            "- Total length: around 3000–4000 characters."
         )
     else:
         language_guidance = (

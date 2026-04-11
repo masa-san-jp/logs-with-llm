@@ -65,6 +65,15 @@ STATE_FILE = REPO_ROOT / os.environ.get("STATE_FILE", ".blog_state.json")
 DATE_RE = re.compile(r"\b(20\d{2})(\d{2})(\d{2})\b")
 SUPPORTED_LANGUAGES = ("ja", "en")
 
+_SUMMARIZE_PROMPT_TEMPLATE = (
+    'You are a precise technical summarizer.\n'
+    'Summarize the following content from "{source_name}".\n'
+    'Preserve ALL important elements: events, decisions made, things built or learned, '
+    'open questions, concrete numbers, and tool names.\n'
+    'Be concise but complete — do not drop key facts. Write in plain prose, no headers needed.\n\n'
+    'Content:\n{content}\n'
+)
+
 
 def validate_language(language: str) -> str:
     if language not in SUPPORTED_LANGUAGES:
@@ -197,19 +206,62 @@ def extract_pdf_text(path: Path) -> str:
     return "\n".join(pages)
 
 
-def read_log_files(files: list[Path]) -> str:
-    """Concatenate log file contents into a single string."""
-    parts: list[str] = []
+def read_log_files(files: list[Path]) -> dict[str, str]:
+    """Read each file and return a dict mapping relative path to raw content."""
+    result: dict[str, str] = {}
     for f in files:
+        key = str(f.relative_to(REPO_ROOT))
         try:
             if f.suffix.lower() == ".pdf":
                 content = extract_pdf_text(f)
             else:
                 content = f.read_text(encoding="utf-8", errors="replace")
-            parts.append(f"### {f.relative_to(REPO_ROOT)}\n\n{content}")
         except OSError:
-            pass
-    return "\n\n---\n\n".join(parts)
+            content = ""
+        result[key] = content
+    return result
+
+
+def summarize_content(content: str, source_name: str) -> str:
+    """Summarize content with an independent LLM call (no shared context).
+
+    Falls back to the original content if the LLM call fails, so a single
+    bad file does not abort the whole run.
+    """
+    prompt = _SUMMARIZE_PROMPT_TEMPLATE.format(
+        source_name=source_name, content=content
+    )
+    print(f"[generate_weekly_blog] Summarizing: {source_name}")
+    try:
+        return generate_blog_content(prompt)
+    except Exception as exc:
+        print(
+            f"[generate_weekly_blog] Summarization failed for {source_name}: {exc}; "
+            "using original content.",
+            file=sys.stderr,
+        )
+        return content
+
+
+def summarize_log_files(log_files_dict: dict[str, str]) -> str:
+    """Summarize each file independently and aggregate the results."""
+    summaries: list[str] = []
+    for source_name, content in log_files_dict.items():
+        if not content.strip():
+            continue
+        summary = summarize_content(content, source_name)
+        summaries.append(f"### {source_name}\n\n{summary}")
+    return "\n\n---\n\n".join(summaries)
+
+
+def summarize_previous_blog(language: str) -> str:
+    """Read the previous blog and summarize it with an independent LLM call."""
+    raw = read_previous_blog(language)
+    if not raw:
+        return ""
+    prev_post = find_previous_blog(language)
+    source_name = prev_post.name if prev_post else f"previous-{language}-blog"
+    return summarize_content(raw, source_name)
 
 
 # ---------------------------------------------------------------------------
@@ -442,7 +494,7 @@ def main() -> None:
         f"  provider={LLM_PROVIDER}"
     )
 
-    # Collect logs
+    # Phase 1: Collect log files
     log_files = collect_log_files(window_start, window_end)
     if not log_files:
         print(
@@ -450,21 +502,28 @@ def main() -> None:
             "Writing a placeholder post.",
             file=sys.stderr,
         )
-        logs_text = "(No new log entries found for this period.)"
+        aggregated_logs_summary = "(No new log entries found for this period.)"
     else:
         print(f"[generate_weekly_blog] Found {len(log_files)} log file(s).")
-        logs_text = read_log_files(log_files)
+        # Phase 2: Read file contents (returns dict)
+        log_files_dict = read_log_files(log_files)
+        # Phase 3: Summarize each file with an independent LLM context
+        print("[generate_weekly_blog] Summarizing log files...")
+        aggregated_logs_summary = summarize_log_files(log_files_dict)
 
     BLOG_DIR.mkdir(parents=True, exist_ok=True)
     for language in SUPPORTED_LANGUAGES:
-        prev_blog = read_previous_blog(language)
-        if prev_blog:
+        # Phase 4: Summarize previous blog with an independent LLM context
+        print(f"[generate_weekly_blog] Summarizing previous {language} blog...")
+        prev_blog_summary = summarize_previous_blog(language)
+        if prev_blog_summary:
             prev_post = find_previous_blog(language)
             print(f"[generate_weekly_blog] Using previous {language} blog post: {prev_post.name}")
         else:
             print(f"[generate_weekly_blog] No previous {language} blog post found.")
 
-        prompt = build_prompt(logs_text, prev_blog, post_date, language)
+        # Phase 5: Build prompt using compressed summaries only
+        prompt = build_prompt(aggregated_logs_summary, prev_blog_summary, post_date, language)
 
         # Generate content
         content = generate_blog_content(prompt)

@@ -257,7 +257,7 @@ class TestExtractPdfText:
             result = gen.read_log_files([pdf_path])
 
         mock_extract.assert_called_once_with(pdf_path)
-        assert "extracted pdf text" in result
+        assert any("extracted pdf text" in v for v in result.values())
 
     def test_pdf_collected_in_window(self, tmp_path):
         """collect_log_files picks up .pdf files whose path contains a date in window."""
@@ -274,3 +274,132 @@ class TestExtractPdfText:
 
         assert len(files) == 1
         assert files[0].suffix == ".pdf"
+
+
+# ---------------------------------------------------------------------------
+# read_log_files
+# ---------------------------------------------------------------------------
+
+class TestReadLogFiles:
+    def test_returns_dict_keyed_by_relative_path(self, tmp_path):
+        f = tmp_path / "logs" / "20260310-project" / "note.md"
+        f.parent.mkdir(parents=True)
+        f.write_text("hello")
+        with mock.patch.object(gen, "REPO_ROOT", tmp_path):
+            result = gen.read_log_files([f])
+        assert isinstance(result, dict)
+        assert len(result) == 1
+        key = list(result.keys())[0]
+        assert "20260310" in key
+        assert result[key] == "hello"
+
+    def test_oserror_stores_empty_string(self, tmp_path):
+        missing = tmp_path / "logs" / "20260310-x" / "ghost.md"
+        with mock.patch.object(gen, "REPO_ROOT", tmp_path):
+            result = gen.read_log_files([missing])
+        assert isinstance(result, dict)
+        assert len(result) == 1
+        assert list(result.values())[0] == ""
+
+    def test_multiple_files_all_included(self, tmp_path):
+        logs_dir = tmp_path / "logs"
+        for name in ["20260310-a/note.md", "20260311-b/note.md"]:
+            p = logs_dir / name
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(f"content of {name}")
+        files = list((tmp_path / "logs").rglob("*.md"))
+        with mock.patch.object(gen, "REPO_ROOT", tmp_path):
+            result = gen.read_log_files(files)
+        assert len(result) == 2
+
+
+# ---------------------------------------------------------------------------
+# summarize_content
+# ---------------------------------------------------------------------------
+
+class TestSummarizeContent:
+    def test_calls_generate_blog_content(self):
+        with mock.patch.object(gen, "generate_blog_content", return_value="summary") as mock_gen:
+            result = gen.summarize_content("raw text", "source.md")
+        mock_gen.assert_called_once()
+        assert result == "summary"
+
+    def test_prompt_contains_source_name_and_content(self):
+        with mock.patch.object(gen, "generate_blog_content", return_value="ok") as mock_gen:
+            gen.summarize_content("my content", "logs/20260310-project/note.md")
+        prompt_sent = mock_gen.call_args[0][0]
+        assert "logs/20260310-project/note.md" in prompt_sent
+        assert "my content" in prompt_sent
+
+    def test_falls_back_to_original_on_failure(self):
+        with mock.patch.object(gen, "generate_blog_content", side_effect=RuntimeError("API down")):
+            result = gen.summarize_content("raw text", "source.md")
+        assert result == "raw text"
+
+
+# ---------------------------------------------------------------------------
+# summarize_log_files
+# ---------------------------------------------------------------------------
+
+class TestSummarizeLogFiles:
+    def test_calls_summarize_per_file(self):
+        files = {"logs/a.md": "content a", "logs/b.md": "content b"}
+        with mock.patch.object(gen, "summarize_content", return_value="summary") as mock_sum:
+            result = gen.summarize_log_files(files)
+        assert mock_sum.call_count == 2
+        assert "logs/a.md" in result
+        assert "logs/b.md" in result
+
+    def test_skips_empty_files(self):
+        files = {"logs/a.md": "content", "logs/empty.md": "   "}
+        with mock.patch.object(gen, "summarize_content", return_value="s") as mock_sum:
+            gen.summarize_log_files(files)
+        assert mock_sum.call_count == 1
+
+    def test_empty_dict_returns_empty_string(self):
+        result = gen.summarize_log_files({})
+        assert result == ""
+
+    def test_aggregated_output_contains_all_summaries(self):
+        files = {"logs/x.md": "aaa", "logs/y.md": "bbb"}
+        with mock.patch.object(gen, "summarize_content", side_effect=["sum-x", "sum-y"]):
+            result = gen.summarize_log_files(files)
+        assert "sum-x" in result
+        assert "sum-y" in result
+
+
+# ---------------------------------------------------------------------------
+# summarize_previous_blog
+# ---------------------------------------------------------------------------
+
+class TestSummarizePreviousBlog:
+    def test_returns_empty_string_when_no_previous_blog(self, tmp_path):
+        blog_dir = tmp_path / "blog"
+        blog_dir.mkdir()
+        with mock.patch.object(gen, "BLOG_DIR", blog_dir):
+            result = gen.summarize_previous_blog("ja")
+        assert result == ""
+
+    def test_summarizes_previous_blog_content(self, tmp_path):
+        blog_dir = tmp_path / "blog"
+        blog_dir.mkdir()
+        (blog_dir / "20260301-weekly.md").write_text("# Old Post\nSome content")
+        with (
+            mock.patch.object(gen, "BLOG_DIR", blog_dir),
+            mock.patch.object(gen, "summarize_content", return_value="condensed") as mock_sum,
+        ):
+            result = gen.summarize_previous_blog("ja")
+        mock_sum.assert_called_once()
+        assert result == "condensed"
+
+    def test_source_name_is_filename(self, tmp_path):
+        blog_dir = tmp_path / "blog"
+        blog_dir.mkdir()
+        (blog_dir / "20260301-weekly-en.md").write_text("# Old EN Post")
+        with (
+            mock.patch.object(gen, "BLOG_DIR", blog_dir),
+            mock.patch.object(gen, "summarize_content", return_value="ok") as mock_sum,
+        ):
+            gen.summarize_previous_blog("en")
+        source_name_used = mock_sum.call_args[0][1]
+        assert source_name_used == "20260301-weekly-en.md"

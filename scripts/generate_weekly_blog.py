@@ -252,14 +252,14 @@ def build_prompt(logs_text: str, prev_blog: str, post_date: date, language: str)
             "- Write in first person, in Japanese.\n"
             "- Keep project names, tool names, and code identifiers accurate; leave them in English where natural.\n"
             "- Keep the tone curious and reflective, not corporate.\n"
-            "- Total length: around 600–900 words."
+            "- Total length: around 2000–3000 characters."
         )
     else:
         language_guidance = (
             "- Write in first person, in English (the logs may be in Japanese; translate and interpret).\n"
             "- Be specific: mention project names, tools, and concrete outcomes.\n"
             "- Keep the tone curious and reflective, not corporate.\n"
-            "- Total length: around 600–900 words."
+            "- Total length: around 2000–3000 characters."
         )
 
     return f"""You are a thoughtful technical blogger writing a weekly update about AI and software experiments.
@@ -270,12 +270,12 @@ The post should feel like a genuine personal reflection — not a dry summary.
 
 Required structure:
 1. `# Weekly Update – {date_str}` (title)
-2. Short intro paragraph (2–3 sentences, conversational)
-3. `## Highlights` — 3–5 bullet points of the most interesting things
-4. `## What I Worked On` — narrative paragraphs about the week's work
+2. A short, suggestive intro paragraph that sparks the reader's curiosity (2–3 sentences, conversational)
+3. `## Highlights` — 3–5 bullet points with summaries of the most interesting and worth-exploring topics
+4. `## What I Worked On` — narrative paragraphs about the week's work. Write with depth about the overall picture, the themes explored in detail, and what felt novel or interesting
 5. `## Decisions & Tradeoffs` — key technical or design decisions made and why
-6. `## Progress Since Last Time` — compare with the previous blog post; what moved forward, what is still open (if no previous post exists, write a brief "first post" note)
-7. `## What's Next` — a forward-looking section
+6. `## Progress Since Last Time` — compare with the previous blog post; what moved forward, what evolved, and what is still unresolved
+7. `## What's Next` — propose new themes for future work that extend the current progress and open up new areas
 
 Guidelines:
 {language_guidance}

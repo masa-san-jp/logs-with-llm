@@ -1,121 +1,44 @@
-# decision-logs-with-llm
-## about
-- いろいろなLLMと会話していると、誰と何を話したのか忘れてしまうので、議事録を残していくことにしました。
-- 議事録をプロンプトとして「この話の続きなんだけど…」とやると、あたらしいスレッドを立てたり、他のLLMと議論の続きができるので重宝しています。
+# logs-with-llm
 
----
+## 概要
+このリポジトリは、LLM との対話ログ、週次ブログ、自動化スクリプト、プロンプト資産をまとめて管理するための作業場所です。
+日々の記録を `logs/` に残し、それをもとに GitHub Actions で週次ブログ生成と次のドキュメント目標の提案を自動化しています。
 
-## Weekly Blog Automation
+## 主なディレクトリ
+- `logs/`: LLM との対話や作業メモ
+- `blog/`: 週次ブログの生成結果
+- `prompts/`: 会話や執筆に使うプロンプト
+- `scripts/`: GitHub Actions から実行する Python スクリプト
+- `scripts/tests/`: 自動化スクリプトのテスト
+- `docs/`: 設計仕様書と運用ガイド
+- `researches/`: 調査メモ
 
-A GitHub Actions workflow (`weekly-blog.yml`) runs every Friday at 09:00 UTC and
-generates an engaging blog-style post from recent entries in `logs/`.
-Generated posts are saved under `blog/yyyymmdd-weekly.md` (Japanese) and
-`blog/yyyymmdd-weekly-en.md` (English) and opened as a PR for review.
+## GitHub Actions で自動化していること
+### 1. 週次ブログ生成
+- ワークフロー: `.github/workflows/weekly-blog.yml`
+- 実行スクリプト: `scripts/generate_weekly_blog.py`
+- 内容: `logs/` の直近記録を集約し、日本語版・英語版の週次ブログを `blog/` に出力
+- 詳細: `docs/weekly-blog-generator-spec.md`
 
-### How it works
+### 2. 週次ドキュメント目標 Issue 生成
+- ワークフロー: `.github/workflows/weekly-doc-goal-issue.yml`
+- 実行スクリプト: `scripts/generate_weekly_goal_issue.py`
+- 内容: README、`prompts/`、`blog/`、`logs/` を棚卸しし、次に取り組むテーマの GitHub Issue を提案
+- 詳細: `docs/weekly-doc-goal-issue-spec.md`
 
-1. The script (`scripts/generate_weekly_blog.py`) scans `logs/` for directories or
-   files whose names contain a `yyyymmdd` date token (e.g. `20260310-grant-agent`).
-2. Files whose date falls within the past 7 days are collected. Both plain-text files
-   and **PDF files** (`.pdf`) are supported — text is extracted from PDFs automatically
-   using [pypdf](https://pypdf.readthedocs.io/).
-3. If no dated files are found the script falls back to a `git diff` against the
-   last processed commit (recorded in `.blog_state.json`).
-4. The previous blog post in `blog/` is read as context so the new post can
-   describe what changed since last time.
-5. A prompt is sent to the configured LLM backend, and the response is written to
-   `blog/yyyymmdd-weekly.md` and `blog/yyyymmdd-weekly-en.md`.
+## docs ディレクトリ
+- `docs/README.md`: `docs/` 配下の案内
+- `docs/weekly-blog-generator-spec.md`: 週次ブログ生成の設計仕様書
+- `docs/weekly-doc-goal-issue-spec.md`: 週次ドキュメント目標 Issue 生成の設計仕様書
+- `docs/operation-guide.md`: 運用ガイド
 
-### Environment variables / workflow inputs
-
-| Variable | Default | Description |
-|---|---|---|
-| `LLM_PROVIDER` | `openai` | LLM backend: `openai`, `anthropic`, or `ollama` |
-| `BLOG_DAYS` | `7` | Days to look back |
-| `BLOG_DATE` | today UTC | Override output date (`YYYY-MM-DD`) |
-| `OPENAI_API_KEY` | — | Required for `openai` mode (store as GitHub Secret) |
-| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Override OpenAI-compatible endpoint |
-| `OPENAI_MODEL` | `gpt-5.4-mini` | Model for OpenAI mode |
-| `ANTHROPIC_API_KEY` | — | Required for `anthropic` mode (store as GitHub Secret) |
-| `ANTHROPIC_MODEL` | `claude-sonnet-4-20250514` | Model for Anthropic mode |
-| `OLLAMA_URL` | `http://localhost:11434` | Ollama endpoint |
-| `OLLAMA_MODEL` | `gpt-oss:20b` | Model for Ollama mode |
-
-### Running locally with Anthropic
-
-```bash
-export ANTHROPIC_API_KEY=sk-ant-...
-export LLM_PROVIDER=anthropic
-
-python scripts/generate_weekly_blog.py
-```
-
-### Running locally with OpenAI
-
-```bash
-export OPENAI_API_KEY=sk-...
-export OPENAI_MODEL=gpt-5.4-mini
-
-python scripts/generate_weekly_blog.py
-```
-
-You can also point the script at any OpenAI-compatible API (e.g. Azure OpenAI,
-Together AI, Groq) by setting `OPENAI_BASE_URL`.
-
-### Running locally with Ollama
-
-```bash
-# 1. Start Ollama (if not already running)
-ollama serve &
-
-# 2. Pull the model once
-ollama pull gpt-oss:20b
-
-# 3. Run the generator
-LLM_PROVIDER=ollama python scripts/generate_weekly_blog.py
-```
-
-The new posts are written to `blog/yyyymmdd-weekly.md` and
-`blog/yyyymmdd-weekly-en.md`.
-
-### Manual workflow dispatch
-
-Go to **Actions → Weekly Blog Generator → Run workflow** in the GitHub UI.
-You can override `llm_provider`, `blog_days`, and `blog_date` inputs before running.
-
-### Scheduling
-
-The workflow is scheduled via cron (`0 9 * * 5` – every Friday 09:00 UTC).
-To change the schedule, edit `.github/workflows/weekly-blog.yml`.
-
-### Running tests
-
+## ローカルでの確認
 ```bash
 pip install -r requirements.txt pytest
-pytest scripts/tests/
+python -m pytest -q scripts/tests
 ```
 
-## Weekly Documentation Goal Automation
-
-A GitHub Actions workflow (`.github/workflows/weekly-doc-goal-issue.yml`) runs every
-Friday at 09:00 UTC and analyzes the repository documentation as a whole.
-
-It builds an inventory from `README.md`, `prompts/`, `blog/`, and `logs/` (including
-**PDF files** in `logs/`), asks an LLM to identify the most original and challenging
-next goal, and then opens a GitHub issue draft as a regular issue.
-
-### Environment variables / workflow inputs
-
-| Variable | Default | Description |
-|---|---|---|
-| `LLM_PROVIDER` | `openai` | LLM backend: `openai` or `anthropic` |
-| `ISSUE_DATE` | today UTC | Override issue date (`YYYY-MM-DD`) |
-| `OPENAI_API_KEY` | — | Required for `openai` mode |
-| `OPENAI_MODEL` | `gpt-5.4-mini` | Model for OpenAI mode |
-| `ANTHROPIC_API_KEY` | — | Required for `anthropic` mode |
-| `ANTHROPIC_MODEL` | `claude-sonnet-4-20250514` | Model for Anthropic mode |
-
-### Manual workflow dispatch
-
-Go to **Actions → Weekly Documentation Goal Issue → Run workflow** in the GitHub UI.
-You can override `llm_provider` and `issue_date` before running.
+## 運用メモ
+- 週次処理の詳細仕様は `docs/` を参照してください
+- GitHub Actions の入力・出力・成果物を変更した場合は README と `docs/` を同時に更新してください
+- 認証情報や秘密情報はリポジトリ外の設定で管理し、このリポジトリ内の文書には書かない方針です

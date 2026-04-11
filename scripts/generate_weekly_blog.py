@@ -269,7 +269,7 @@ Write an engaging blog post in Markdown based on the decision logs below.
 The post should feel like a genuine personal reflection — not a dry summary.
 
 Required structure:
-1. `# Weekly Update – {date_str}` (title)
+1. `# <Title>` — a short, catchy, article-style title in 30 characters or fewer that makes the reader feel curious, excited, or emotionally engaged; do not use a generic date-based title
 2. A short, suggestive intro paragraph that sparks the reader's curiosity (2–3 sentences, conversational)
 3. `## Highlights` — 3–5 bullet points with summaries of the most interesting and worth-exploring topics
 4. `## What I Worked On` — narrative paragraphs about the week's work. Write with depth about the overall picture, the themes explored in detail, and what felt novel or interesting

@@ -125,17 +125,29 @@ def collect_log_files(window_start: date, window_end: date) -> list[Path]:
         "falling back to git-diff strategy.",
         file=sys.stderr,
     )
-    return _git_diff_log_files()
+    return _git_diff_log_files(window_start)
 
 
-def _git_diff_log_files() -> list[Path]:
-    """Return log files changed since the last recorded commit SHA."""
+def _git_diff_log_files(window_start: Optional[date] = None) -> list[Path]:
+    """Return log files changed since the last recorded commit SHA.
+
+    When no prior SHA is recorded, falls back to ``git log --since`` bounded
+    by *window_start* (if provided) rather than the single ``HEAD~1..HEAD``
+    diff, so that the full ``BLOG_DAYS`` window is respected.
+    """
     state = _load_state()
     base_sha = state.get("last_commit_sha", "")
 
     cmd: list[str]
     if base_sha:
         cmd = ["git", "-C", str(REPO_ROOT), "diff", "--name-only", base_sha, "HEAD"]
+    elif window_start:
+        cmd = [
+            "git", "-C", str(REPO_ROOT),
+            "log", "--name-only", "--format=",
+            f"--since={window_start.isoformat()}",
+            "HEAD",
+        ]
     else:
         cmd = ["git", "-C", str(REPO_ROOT), "diff", "--name-only", "HEAD~1", "HEAD"]
 

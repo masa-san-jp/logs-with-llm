@@ -360,7 +360,7 @@ def build_prompt(logs_text: str, prev_blog: str, post_date: date, language: str)
         required_structure = (
             "Required structure:\n"
             "1. `# <タイトル>` — 30 字以内で読者の好奇心・共感を喚起する記事タイトル。日付ベースのタイトルは使わない\n"
-            "2. 冒頭段落（2〜3 文）: 事実提示 / 状況設定 / 前日譚のいずれかで始める\n"
+            "2. 冒頭段落（1〜3 文）: 事実提示 / 状況設定 / 前日譚のいずれかで始める\n"
             "3. 本文セクション: H2 見出しを「概念：切り口」形式で自由に設定する。\n"
             "   固定セクション名（Highlights / What I Worked On 等）は使わない。\n"
             "   ログの実際のテーマを反映した見出しを選ぶこと。"

@@ -185,7 +185,7 @@ class TestBuildPrompt:
         prompt = gen.build_prompt("logs", "", date(2026, 3, 10), "en")
         assert "Previous blog post" not in prompt
 
-    def test_required_sections_present(self):
+    def test_includes_prompt_guidance_strings(self):
         prompt = gen.build_prompt("logs", "prev", date(2026, 3, 10), "en")
         assert "Concept: Angle" in prompt
         assert "Before writing your output, confirm each of the following" in prompt

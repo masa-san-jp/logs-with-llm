@@ -185,14 +185,14 @@ class TestBuildPrompt:
         prompt = gen.build_prompt("logs", "", date(2026, 3, 10), "en")
         assert "Previous blog post" not in prompt
 
-    def test_required_sections_present(self):
+    def test_includes_prompt_guidance_strings(self):
         prompt = gen.build_prompt("logs", "prev", date(2026, 3, 10), "en")
-        for section in ["Highlights", "What I Worked On", "Decisions", "Progress Since Last Time", "What's Next"]:
-            assert section in prompt
+        assert "Concept: Angle" in prompt
+        assert "Before writing your output, confirm each of the following" in prompt
 
     def test_japanese_prompt_requests_japanese_output(self):
         prompt = gen.build_prompt("logs", "", date(2026, 3, 10), "ja")
-        assert "Write in first person, in Japanese." in prompt
+        assert "「私」に統一" in prompt
 
 
 # ---------------------------------------------------------------------------

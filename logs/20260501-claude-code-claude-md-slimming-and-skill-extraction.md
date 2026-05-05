@@ -193,3 +193,27 @@ description: Run the standard startup procedure for a business agent...
 参考：
 - Claude Code skills 仕様：`.claude/skills/<name>/SKILL.md` に description（YAML frontmatter）+ 本文。`description` の文言が Claude のスキル選択に直接影響する
 - Agent ツールの並列起動：単一の AI message 内で複数の Agent tool_use を含めると並列実行される
+
+---
+
+## 実装状況追記（2026-05-05 確認）
+
+このログで提案した内容は **すべて実装済み**。
+
+| 項目 | 状態 |
+|---|---|
+| `/run-meta-pending` スキル | ✅ `agents/.claude/skills/run-meta-pending/` |
+| `/startup` スキル | ✅ `agents/.claude/skills/startup/`（grant 用拡張も対応済み） |
+| `/teardown` スキル | ✅ `agents/.claude/skills/teardown/` |
+| `/sync` `/meta` `/log-push` 既存スキル | ✅ 同ディレクトリに存在 |
+| business agents root CLAUDE.md スリム化 | ✅ 29 行（log の目標通り） |
+| 業務エージェント 6 件のスリム化 | ✅ 58〜87 行（cfo-fpa 77 / hr 59 / logi-ops 87 / marke-sales 75 / pr-brand 58 / r-d 74） |
+| Aiko CLAUDE.md スリム化 | ✅ 23 行 |
+
+なお、log 作成後に追加された **grant エージェント** にも同パターンを適用：
+
+- 206 行 → 128 行（**-38%**）
+- 圧縮内訳：ディレクトリ構成（33→2 行、`docs/SPEC-INDEX.md` 参照）、起動時手順（11→7 行、`/startup grant` ＋固有3手順）、使うスキル一覧（34→11 行、grant 固有のみ）、設計上の制約（24→10 行、5項目ヘッドライン＋docs 参照）、終了時手順（7→7 行、`/teardown grant` ＋固有処理）
+- 保持：Phase 1/2 起動主体、データ分離原則、抽象タイトル運用、端末ごとの動作モード（grant の核は変更なし）
+- `/startup` SKILL.md 側に「grant エージェントは Phase 確認や local-bindings 存在確認を追加で行う」という拡張ポイントが事前に明記されていたため、追加スキル作成は不要だった
+

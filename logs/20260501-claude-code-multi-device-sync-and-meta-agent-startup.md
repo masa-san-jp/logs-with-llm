@@ -154,3 +154,31 @@ done
 参考：
 - `git pull --ff-only` の挙動：上流に新コミットがあるが自分は新しいコミットを持っていない場合だけ自動マージ。divergence や untracked changes があれば中止
 - Claude Code の hook 仕様：`PreToolUse` / `SessionStart` / `SessionEnd` などのイベントで、シェルコマンドを順次実行できる。matcher で対象ツールを絞り込み可能
+
+---
+
+## 実装状況追記（2026-05-05 確認）
+
+このログで設計した内容は **すべて実装済み・稼働中**。
+
+| 設計要素 | 状態 |
+|---|---|
+| `agent-sync.sh`（sync/pull/push/status モード） | ✅ `agents/.claude/scripts/agent-sync.sh` |
+| `meta-check.sh`（marker 生成） | ✅ `agents/.claude/scripts/meta-check.sh` |
+| SessionStart hook：`agent-sync.sh pull` + `meta-check.sh` | ✅ `agents/.claude/settings.json` |
+| SessionEnd hook：`agent-sync.sh push` | ✅ 同上 |
+| `/sync` スラッシュコマンド | ✅ `agents/.claude/skills/sync/` |
+| `/meta` スラッシュコマンド | ✅ `agents/.claude/skills/meta/` |
+| `.gitignore` で `.pending/` `.last-run-*` を端末ローカル化 | ✅ ルート `.gitignore` |
+| `logs/reviews/.pending/` ディレクトリ | ✅ 存在（24h 以内起動なら空） |
+| `.last-run-{reviewer,scout,lab,janitor}` | ✅ 4 つ揃って稼働中 |
+| メタエージェント実稼働 | ✅ 週次 jsonl（`2026-W18-{role}.jsonl`）に記録蓄積 |
+
+### 設計からの進化点（log 未記載）
+
+- スコープ拡張：`SCOPE_PATHS=("Agent-team/agents" "Agent-team/Agent-Aiko")` — log では `Agent-team/agents` 単独想定だったが、Aiko 人格システム分離（`Agent-team/Agent-Aiko/`）後に 2 スコープへ拡張
+- 派生スキル：`/log-push`（agent-sync を裏で呼び、per-agent JSONL + dev-logs.md + 公開ログを横断更新）、`/teardown`（per-agent 単位の終了処理＋金曜の self/peer review）が追加され、`/sync` `/meta` と役割分担
+- セッション中の手動同期：`/sync [pull|push|status]` で任意タイミング実行可能（log 通り）
+
+「マーカー方式は破綻しにくい」という当初仮説は維持。5/1 以降、4 role すべて週次 jsonl が継続更新されていることで、SessionStart hook + marker 二段構えが日次運用として実用に耐えることが確認できた。
+

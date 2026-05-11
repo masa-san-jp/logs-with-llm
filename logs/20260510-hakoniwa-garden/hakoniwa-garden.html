@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>箱庭</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#0c0a06; overflow:hidden; font-family:'Hiragino Maru Gothic ProN','BIZ UDPGothic',sans-serif; }
+  canvas { display:block; }
+
+/* ── UI PANEL ── */
+#panel {
+position:fixed; bottom:22px; left:50%; transform:translateX(-50%);
+display:flex; gap:10px; pointer-events:none; z-index:10;
+}
+.card {
+background:rgba(8,6,2,0.72); backdrop-filter:blur(12px);
+border:1px solid rgba(255,255,255,0.09); border-radius:13px;
+padding:9px 14px; min-width:152px;
+}
+.cname { font-size:11px; color:rgba(255,255,255,0.52); margin-bottom:7px; letter-spacing:.04em; }
+.bbar  { height:5px; background:rgba(255,255,255,0.09); border-radius:3px; overflow:hidden; margin-bottom:4px; }
+.bfill { height:100%; border-radius:3px; transition:width .35s ease, background-color .5s; }
+.bfoot { display:flex; justify-content:space-between; font-size:9px; color:rgba(255,255,255,0.28); }
+
+/* ── HINT ── */
+#hint {
+position:fixed; top:16px; left:50%; transform:translateX(-50%);
+color:rgba(255,255,255,0.25); font-size:10px; letter-spacing:.14em;
+pointer-events:none; z-index:10;
+}
+
+/* ── FLASH ── */
+#flash {
+position:fixed; top:42px; left:50%; transform:translateX(-50%);
+color:rgba(255,255,255,0.6); font-size:12px; letter-spacing:.08em;
+pointer-events:none; z-index:10; opacity:0; transition:opacity .4s;
+}
+
+/* ── SPEECH BUBBLES ── */
+.bub {
+position:fixed; background:rgba(255,253,245,0.93); color:#1a1206;
+font-size:11px; font-weight:700; padding:4px 9px; border-radius:9px;
+pointer-events:none; z-index:20; white-space:nowrap;
+transform:translateX(-50%) translateY(-100%); margin-top:-16px;
+opacity:0; transition:opacity .3s;
+}
+.bub::after {
+content:’’; position:absolute; bottom:-5px; left:50%; transform:translateX(-50%);
+border:5px solid transparent; border-top-color:rgba(255,253,245,0.93); border-bottom:none;
+}
+
+/* ── LEGEND ── */
+#legend {
+position:fixed; top:16px; right:18px;
+color:rgba(255,255,255,0.3); font-size:9px; letter-spacing:.06em;
+line-height:1.9; pointer-events:none; z-index:10;
+}
+</style>
+
+</head>
+<body>
+
+<div id="panel">
+  <div class="card">
+    <div class="cname">🟠 モモ（外向型）</div>
+    <div class="bbar"><div class="bfill" id="barA"></div></div>
+    <div class="bfoot"><span>不快</span><span id="valA">75</span><span>快</span></div>
+  </div>
+  <div class="card">
+    <div class="cname">🔵 シロ（内向型）</div>
+    <div class="bbar"><div class="bfill" id="barB"></div></div>
+    <div class="bfoot"><span>不快</span><span id="valB">45</span><span>快</span></div>
+  </div>
+</div>
+
+<div id="hint">キャラをドラッグ ｜ アイテムをクリック</div>
+<div id="flash"></div>
+<div class="bub" id="bubA"></div>
+<div class="bub" id="bubB"></div>
+
+<div id="legend">
+  🌳 触ると周囲が癒やされる<br>
+  🔔 快なら増幅、不快なら悪化<br>
+  🏠 内向型は中で急速回復<br>
+  ✨ 光の当たる場所で回復ボーナス
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+<script>
+'use strict';
+// ══════════════════════════════════════════════════
+// RENDERER / SCENE / CAMERA
+// ══════════════════════════════════════════════════
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0c0a06);
+scene.fog = new THREE.Fog(0x0c0a06, 24, 38);
+
+const cam = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 0.1, 100);
+cam.position.set(0, 14, 10.5);
+cam.lookAt(0, 0, 0);
+
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+window.addEventListener('resize', () => {
+  cam.aspect = innerWidth/innerHeight;
+  cam.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// ══════════════════════════════════════════════════
+// LIGHTS
+// ══════════════════════════════════════════════════
+scene.add(new THREE.AmbientLight(0xfff5e0, 0.52));
+
+const sun = new THREE.DirectionalLight(0xfff0d0, 1.05);
+sun.position.set(7, 15, 8);
+sun.castShadow = true;
+sun.shadow.mapSize.width = sun.shadow.mapSize.height = 1024;
+const sc = sun.shadow.camera;
+sc.left = sc.bottom = -9; sc.right = sc.top = 9; sc.far = 34;
+scene.add(sun);
+
+const fill = new THREE.DirectionalLight(0xb8d4ff, 0.22);
+fill.position.set(-6, 9, -5);
+scene.add(fill);
+
+// ══════════════════════════════════════════════════
+// HELPERS
+// ══════════════════════════════════════════════════
+const BOUND = 4.75;
+const TREE_POS  = new THREE.Vector3(-4, 0, -4);
+const HOUSE_POS = new THREE.Vector2(4, 4);
+
+function mkMesh(geo, mat, shadow = true) {
+  const m = new THREE.Mesh(geo, mat);
+  if (shadow) { m.castShadow = true; m.receiveShadow = true; }
+  return m;
+}
+function lam(col, opts = {}) {
+  return new THREE.MeshLambertMaterial({ color:col, ...opts });
+}
+function dist2(ax, az, bx, bz) {
+  return Math.sqrt((ax-bx)**2 + (az-bz)**2);
+}
+
+// ══════════════════════════════════════════════════
+// FIELD
+// ══════════════════════════════════════════════════
+// Ground
+const gnd = mkMesh(new THREE.PlaneGeometry(13,13), lam(0x6dbc58));
+gnd.rotation.x = -Math.PI/2;
+gnd.castShadow = false;
+scene.add(gnd);
+
+// Recovery zone (dark moss near tree corner)
+const rz = mkMesh(new THREE.CircleGeometry(2.4, 32), lam(0x479040, { transparent:true, opacity:0.55 }));
+rz.rotation.x = -Math.PI/2;
+rz.position.set(-4, 0.012, -4);
+rz.castShadow = false;
+scene.add(rz);
+
+// Grass tufts
+const grassMat = lam(0x52a840);
+[[-2.5,-3.8],[1.2,-4.0],[-4.1,1.4],[3.5,2.2],[-1.8,3.6],[0.5,3.9],[-3.4,3.0],[2.8,-1.5]].forEach(([x,z]) => {
+  for (let i = 0; i < 3; i++) {
+    const blade = mkMesh(
+      new THREE.CylinderGeometry(0.02, 0.035, 0.18 + Math.random()*0.1, 4),
+      grassMat, false
+    );
+    blade.position.set(x + (Math.random()-0.5)*0.2, 0.09, z + (Math.random()-0.5)*0.2);
+    blade.rotation.set((Math.random()-0.5)*0.3, Math.random()*Math.PI, (Math.random()-0.5)*0.3);
+    scene.add(blade);
+  }
+});
+
+// Fence rails
+const railMat = lam(0x906218);
+const postMat = lam(0x6b4c10);
+const R = 6.15;
+function rail(sx,sy,sz,px,pz) {
+  const m = mkMesh(new THREE.BoxGeometry(sx,sy,sz), railMat);
+  m.position.set(px, sy/2, pz);
+  scene.add(m);
+}
+rail(R*2, 0.18, 0.14,  0,  R);
+rail(R*2, 0.18, 0.14,  0, -R);
+rail(0.14, 0.18, R*2,  R,  0);
+rail(0.14, 0.18, R*2, -R,  0);
+for (let i = -3; i <= 3; i++) {
+  [-R, R].forEach(z => {
+    const p = mkMesh(new THREE.BoxGeometry(0.14, 0.3, 0.14), postMat);
+    p.position.set(i*2, 0.15, z); scene.add(p);
+  });
+  [-R, R].forEach(x => {
+    const p = mkMesh(new THREE.BoxGeometry(0.14, 0.3, 0.14), postMat);
+    p.position.set(x, 0.15, i*2); scene.add(p);
+  });
+}
+
+// ══════════════════════════════════════════════════
+// CHARACTERS
+// ══════════════════════════════════════════════════
+function makeEye(ox, oy, oz) {
+  const g = new THREE.Group();
+  g.position.set(ox, oy, oz);
+  g.add(mkMesh(new THREE.SphereGeometry(0.072, 10, 10), lam(0xffffff), false));
+  const pupil = mkMesh(new THREE.SphereGeometry(0.048, 10, 10), lam(0x060404), false);
+  pupil.position.z = 0.036;
+  g.add(pupil);
+  return g;
+}
+
+function makeChar({ name, type, mood, x, z, col, idx }) {
+  const grp = new THREE.Group();
+  grp.position.set(x, 0.43, z);
+
+  const body = mkMesh(new THREE.SphereGeometry(0.43, 26, 20), lam(col));
+  grp.add(body); // [0]
+
+  const eyeL = makeEye(-0.153, 0.115, 0.365);
+  const eyeR = makeEye( 0.153, 0.115, 0.365);
+  grp.add(eyeL, eyeR); // [1][2]
+
+  // Ground shadow disc
+  const shad = mkMesh(
+    new THREE.CircleGeometry(0.35, 20),
+    lam(0x000000, { transparent:true, opacity:0.18 }), false
+  );
+  shad.rotation.x = -Math.PI/2;
+  shad.position.y = -0.42;
+  grp.add(shad);
+
+  scene.add(grp);
+
+  return {
+    name, type, mood, grp, body, eyeL, eyeR,
+    bar: document.getElementById('bar'+idx),
+    val: document.getElementById('val'+idx),
+    bub: document.getElementById('bub'+idx),
+    lastSpeak: 0,
+    sheltered: false,
+  };
+}
+
+const CA = makeChar({ name:'モモ', type:'extrovert', mood:75, x:-2,   z:-0.5, col:0xff9518, idx:'A' });
+const CB = makeChar({ name:'シロ', type:'introvert', mood:45, x: 2,   z: 0.5, col:0x4882b8, idx:'B' });
+const CHARS = [CA, CB];
+
+// Mood color palettes [unhappy, mid, happy]
+const PALETTES = [
+  [new THREE.Color(0x5a3c1a), new THREE.Color(0xc07810), new THREE.Color(0xff9a20)],
+  [new THREE.Color(0x28396a), new THREE.Color(0x3a6898), new THREE.Color(0x72c0f0)],
+];
+
+function getMoodColor(i, mood) {
+  const t   = mood / 100;
+  const pal = PALETTES[i];
+  const col = new THREE.Color();
+  return t < 0.5
+    ? col.copy(pal[0]).lerp(pal[1], t * 2)
+    : col.copy(pal[1]).lerp(pal[2], (t - 0.5) * 2);
+}
+
+// ══════════════════════════════════════════════════
+// ITEMS
+// ══════════════════════════════════════════════════
+
+// 🌳 TREE  (-4, -4)
+const treeGrp = new THREE.Group();
+treeGrp.position.set(-4, 0, -4);
+(function() {
+  const trunk = mkMesh(new THREE.CylinderGeometry(0.12, 0.19, 0.82, 8), lam(0x7a4c1a));
+  trunk.position.y = 0.41;
+  treeGrp.add(trunk);
+  [
+    { r:0.78, x: 0,    y:1.22, z: 0,    c:0x3a8836 },
+    { r:0.55, x: 0.38, y:1.0,  z: 0.28, c:0x2d7830 },
+    { r:0.44, x:-0.22, y:0.88, z:-0.24, c:0x468a3a },
+  ].forEach(({ r,x,y,z,c }) => {
+    const can = mkMesh(new THREE.SphereGeometry(r, 14, 12), lam(c));
+    can.position.set(x, y, z);
+    treeGrp.add(can);
+  });
+  scene.add(treeGrp);
+})();
+
+// 🔔 BELL  (4, -4)
+const bellGrp = new THREE.Group();
+bellGrp.position.set(4, 0, -4);
+(function() {
+  const post = mkMesh(new THREE.CylinderGeometry(0.07, 0.07, 1.0, 8), lam(0x8a6020));
+  post.position.y = 0.5;
+  bellGrp.add(post);
+
+  const head = mkMesh(new THREE.SphereGeometry(0.24, 16, 14), lam(0xd4a818));
+  head.scale.y = 0.78;
+  head.position.y = 1.1;
+  bellGrp.add(head);
+
+  const clap = mkMesh(new THREE.SphereGeometry(0.055, 8, 8), lam(0x5a4010));
+  clap.position.y = 0.87;
+  bellGrp.add(clap);
+
+  scene.add(bellGrp);
+})();
+
+// 🏠 HOUSE  (4, 4)
+const houseGrp = new THREE.Group();
+houseGrp.position.set(4, 0, 4);
+(function() {
+  const body = mkMesh(new THREE.BoxGeometry(1.5, 0.9, 1.5), lam(0xe2c880));
+  body.position.y = 0.45;
+  houseGrp.add(body);
+
+  const roof = mkMesh(new THREE.CylinderGeometry(0, 1.16, 0.72, 4), lam(0xc04428));
+  roof.position.y = 1.26;
+  roof.rotation.y = Math.PI/4;
+  houseGrp.add(roof);
+
+  const door = mkMesh(new THREE.BoxGeometry(0.3, 0.46, 0.06), lam(0x8a4e16));
+  door.position.set(0, 0.23, 0.77);
+  houseGrp.add(door);
+
+  // Window
+  const win = mkMesh(new THREE.BoxGeometry(0.26, 0.22, 0.05), lam(0xd0ecff));
+  win.position.set(0.46, 0.52, 0.76);
+  houseGrp.add(win);
+
+  scene.add(houseGrp);
+})();
+
+// ✨ LIGHT SPOT (dynamic)
+const lspot = mkMesh(
+  new THREE.CircleGeometry(0.72, 32),
+  new THREE.MeshLambertMaterial({
+    color:0xffee88, emissive:0xffdd44, emissiveIntensity:0.55,
+    transparent:true, opacity:0.38
+  }), false
+);
+lspot.rotation.x = -Math.PI/2;
+lspot.position.set(-1, 0.016, 1.5);
+scene.add(lspot);
+
+// Decorative mushrooms
+[[-3.2,-1.8],[-1.0,-4.1],[1.8,-2.9]].forEach(([mx,mz]) => {
+  const g = new THREE.Group();
+  g.position.set(mx, 0, mz);
+  const stem = mkMesh(new THREE.CylinderGeometry(0.045,0.055,0.16,6), lam(0xf0e8d0), false);
+  stem.position.y = 0.08;
+  g.add(stem);
+  const cap = mkMesh(new THREE.SphereGeometry(0.13,10,8), lam(0xcc3020), false);
+  cap.scale.y = 0.62; cap.position.y = 0.2;
+  g.add(cap);
+  scene.add(g);
+});
+
+const ITEMS = [
+  { name:'木',   type:'tree',  grp:treeGrp,  pos:new THREE.Vector3(-4,0,-4) },
+  { name:'鈴',   type:'bell',  grp:bellGrp,  pos:new THREE.Vector3( 4,0,-4) },
+  { name:'小屋', type:'house', grp:houseGrp, pos:new THREE.Vector3( 4,0, 4) },
+];
+
+// ══════════════════════════════════════════════════
+// INTERACTION
+// ══════════════════════════════════════════════════
+const raycaster  = new THREE.Raycaster();
+const mouse      = new THREE.Vector2();
+const gPlane     = new THREE.Plane(new THREE.Vector3(0,1,0), 0);
+const isect      = new THREE.Vector3();
+let dragging     = null;
+let pointerDownXY = null;
+
+function setMouse(e) {
+  const cx = e.clientX, cy = e.clientY;
+  mouse.x =  (cx / innerWidth)  * 2 - 1;
+  mouse.y = -(cy / innerHeight) * 2 + 1;
+  return { x:cx, y:cy };
+}
+
+function charBodies() { return CHARS.map(c => c.body); }
+function itemMeshPairs() {
+  const out = [];
+  ITEMS.forEach(item => item.grp.traverse(m => { if (m.isMesh) out.push({ m, item }); }));
+  return out;
+}
+
+renderer.domElement.addEventListener('pointerdown', e => {
+  pointerDownXY = setMouse(e);
+  raycaster.setFromCamera(mouse, cam);
+  const hits = raycaster.intersectObjects(charBodies());
+  if (hits.length) dragging = CHARS.find(c => c.body === hits[0].object);
+});
+
+renderer.domElement.addEventListener('pointermove', e => {
+  setMouse(e);
+  if (!dragging) return;
+  raycaster.setFromCamera(mouse, cam);
+  raycaster.ray.intersectPlane(gPlane, isect);
+  dragging.grp.position.x = Math.max(-BOUND, Math.min(BOUND, isect.x));
+  dragging.grp.position.z = Math.max(-BOUND, Math.min(BOUND, isect.z));
+});
+
+renderer.domElement.addEventListener('pointerup', e => {
+  const cur = setMouse(e);
+  const dd = pointerDownXY
+    ? Math.sqrt((cur.x - pointerDownXY.x)**2 + (cur.y - pointerDownXY.y)**2)
+    : 99;
+
+  if (dd < 7) {   // tap (not drag)
+    raycaster.setFromCamera(mouse, cam);
+    const pairs = itemMeshPairs();
+    const iHits = raycaster.intersectObjects(pairs.map(p => p.m));
+    if (iHits.length) {
+      const found = pairs.find(p => p.m === iHits[0].object);
+      if (found) activateItem(found.item);
+    } else {
+      const cHits = raycaster.intersectObjects(charBodies());
+      if (cHits.length) {
+        const ch = CHARS.find(c => c.body === cHits[0].object);
+        if (ch) touchChar(ch);
+      }
+    }
+  }
+  dragging = null;
+});
+
+// ══════════════════════════════════════════════════
+// ITEM EFFECTS
+// ══════════════════════════════════════════════════
+function showFlash(txt) {
+  const el = document.getElementById('flash');
+  el.textContent = txt;
+  el.style.opacity = '1';
+  clearTimeout(el._t);
+  el._t = setTimeout(() => { el.style.opacity = '0'; }, 1600);
+}
+
+function pulseGroup(grp) {
+  const snapshots = [];
+  grp.traverse(m => {
+    if (m.isMesh) snapshots.push({ m, sx:m.scale.x, sy:m.scale.y, sz:m.scale.z });
+  });
+  const t0 = Date.now();
+  (function tick() {
+    const t = Math.min(1, (Date.now()-t0)/360);
+    const s = 1 + Math.sin(t * Math.PI) * 0.24;
+    snapshots.forEach(({ m,sx,sy,sz }) => m.scale.set(sx*s, sy*s, sz*s));
+    if (t < 1) requestAnimationFrame(tick);
+    else snapshots.forEach(({ m,sx,sy,sz }) => m.scale.set(sx, sy, sz));
+  })();
+}
+
+function activateItem(item) {
+  pulseGroup(item.grp);
+
+  if (item.type === 'tree') {
+    CHARS.forEach(c => {
+      const d = c.grp.position.distanceTo(item.pos);
+      if (d < 4.0) {
+        const eff = (4.0 - d) / 4.0 * 15;
+        c.mood = Math.min(100, c.mood + eff);
+        speak(c, c.mood > 70 ? 'きもちいい！' : 'らくになった');
+      }
+    });
+    showFlash('🌳 木がひかった');
+
+  } else if (item.type === 'bell') {
+    CHARS.forEach(c => {
+      const d = c.grp.position.distanceTo(item.pos);
+      if (d < 3.8) {
+        if (c.mood >= 50) {
+          c.mood = Math.min(100, c.mood + 15);
+          speak(c, 'きれいな音！');
+        } else {
+          c.mood = Math.max(0, c.mood - 13);
+          speak(c, 'うるさい…');
+        }
+      }
+    });
+    showFlash('🔔 鈴がなった');
+
+  } else if (item.type === 'house') {
+    showFlash('🏠 そっと置いておくと回復する');
+  }
+}
+
+function touchChar(c) {
+  if (c.mood >= 50) {
+    c.mood = Math.min(100, c.mood + (c.type === 'extrovert' ? 11 : 5));
+    speak(c, c.type === 'extrovert' ? 'わーい！' : 'ありがと');
+  } else {
+    c.mood = Math.max(0, c.mood + (c.type === 'extrovert' ? -4 : -13));
+    speak(c, c.type === 'extrovert' ? 'そっとして' : 'さわらないで！');
+  }
+}
+
+// ══════════════════════════════════════════════════
+// SPEECH
+// ══════════════════════════════════════════════════
+const LINES = {
+  extrovert: {
+    veryHappy:  ['いっしょにいようよ！','たのしい！','もっとあそぼ！'],
+    happy:      ['ねえねえ！','こっちきて〜','いいきぶん♪'],
+    neutral:    ['うん…','まあまあ'],
+    unhappy:    ['さびしいな','きてよ〜','どこにいるの'],
+    veryUnhappy:['ひとりはいや…','だれかいてよ…','こわい'],
+  },
+  introvert: {
+    veryHappy:  ['しずかでいいな','ゆっくりできる','きもちいい'],
+    happy:      ['おちついてる','うん','いいかんじ'],
+    neutral:    ['ふつう','…'],
+    unhappy:    ['ちかすぎる','うるさいな','ちょっと…'],
+    veryUnhappy:['そっとしておいて','つかれた…','ひとりにして'],
+  }
+};
+
+function moodCat(mood) {
+  if (mood >= 80) return 'veryHappy';
+  if (mood >= 60) return 'happy';
+  if (mood >= 40) return 'neutral';
+  if (mood >= 20) return 'unhappy';
+  return 'veryUnhappy';
+}
+
+function speak(c, text) {
+  const now = Date.now();
+  if (now - c.lastSpeak < 2200) return;
+  c.lastSpeak = now;
+  c.bub.textContent = text;
+  c.bub.style.opacity = '1';
+  clearTimeout(c.bub._t);
+  c.bub._t = setTimeout(() => { c.bub.style.opacity = '0'; }, 2000);
+}
+
+function maybeSpeak(c) {
+  if (Math.random() > 0.006) return;
+  const cat   = moodCat(c.mood);
+  const lines = LINES[c.type][cat];
+  speak(c, lines[Math.floor(Math.random() * lines.length)]);
+}
+
+// ══════════════════════════════════════════════════
+// PARAMETER SIMULATION
+// ══════════════════════════════════════════════════
+let lastTick = Date.now();
+
+function simulate() {
+  const now = Date.now();
+  const dt  = Math.min((now - lastTick) / 1000, 0.1);
+  lastTick  = now;
+
+  const pA  = CA.grp.position;
+  const pB  = CB.grp.position;
+  const prox = Math.max(0, 1 - dist2(pA.x, pA.z, pB.x, pB.z) / 4.2);
+
+  // House shelter
+  CHARS.forEach(c => {
+    const p = c.grp.position;
+    c.sheltered = dist2(p.x, p.z, HOUSE_POS.x, HOUSE_POS.y) < 1.3;
+  });
+
+  // Light spot
+  const lp = lspot.position;
+  const aLight = dist2(pA.x, pA.z, lp.x, lp.z) < 0.85;
+  const bLight = dist2(pB.x, pB.z, lp.x, lp.z) < 0.85;
+
+  CHARS.forEach((c, i) => {
+    const other  = CHARS[1 - i];
+    const inLight = i === 0 ? aLight : bLight;
+    let d = 0;
+
+    if (c.sheltered) {
+      d += c.type === 'introvert' ? 2.0 * dt : -1.3 * dt;
+    } else {
+      // Company / solitude
+      if (c.type === 'extrovert') {
+        d += (prox * 1.9 - 0.95 * (1 - prox)) * dt;
+      } else {
+        d += (-prox * 1.5 + 0.72 * (1 - prox)) * dt;
+      }
+      // Mood contagion via proximity
+      if (prox > 0.15) {
+        d += (other.mood - 50) / 100 * prox * 0.5 * dt;
+      }
+      // Tree passive healing (only if unhappy)
+      const td = c.grp.position.distanceTo(TREE_POS);
+      if (td < 2.7 && c.mood < 55) {
+        d += (2.7 - td) / 2.7 * 0.65 * dt;
+      }
+    }
+
+    // Light spot bonus
+    if (inLight) d += 0.5 * dt;
+
+    // Anti-deadlock floor/ceiling
+    if (c.mood < 10) d += 0.3 * dt;   // always a way out
+    if (c.mood > 93) d -= 0.07 * dt;  // slight regression at peak
+
+    c.mood = Math.max(0, Math.min(100, c.mood + d));
+  });
+}
+
+// ══════════════════════════════════════════════════
+// VISUALS
+// ══════════════════════════════════════════════════
+function worldToScreen(pos) {
+  const v = pos.clone().project(cam);
+  return { x:(v.x+1)/2*innerWidth, y:(-v.y+1)/2*innerHeight };
+}
+
+function updateVisuals(t) {
+  CHARS.forEach((c, i) => {
+    const mood = c.mood;
+    const tv   = mood / 100;
+
+    // Body color
+    c.body.material.color.copy(getMoodColor(i, mood));
+
+    // Bob (happy) / squish (sad)
+    const bobSpd = 0.55 + tv * 2.6;
+    const bobAmp = tv > 0.62 ? 0.055 * (tv - 0.62) / 0.38 : 0;
+    const bob    = Math.sin(t * bobSpd + i * 1.8) * bobAmp;
+    const sqshXZ = tv < 0.3 ? 1.06 - tv * 0.18 : 1.0;
+    const strchY = (tv < 0.3 ? 0.9 + tv * 0.33 : 1.0) + bob;
+    c.grp.children[0].scale.set(sqshXZ, strchY, sqshXZ);
+
+    // Slight hover when happy
+    c.grp.position.y = 0.43 + Math.max(0, bob * 0.5);
+
+    // Eye droop / scale
+    const eyeY  = 0.115 - (1 - tv) * 0.078;
+    const eyeSc = 0.7 + tv * 0.5;
+    [c.eyeL, c.eyeR].forEach(e => {
+      e.position.y = eyeY;
+      e.scale.setScalar(eyeSc);
+    });
+
+    // UI
+    c.bar.style.width           = mood + '%';
+    c.bar.style.backgroundColor = mood < 30 ? '#4a72d0' : mood < 58 ? '#88aa44' : '#ffcc22';
+    c.val.textContent           = Math.round(mood);
+
+    // Bubble position
+    const sp = worldToScreen(new THREE.Vector3(
+      c.grp.position.x, c.grp.position.y + 0.86, c.grp.position.z
+    ));
+    c.bub.style.left = sp.x + 'px';
+    c.bub.style.top  = sp.y + 'px';
+
+    maybeSpeak(c);
+  });
+
+  // Light spot drift (slow orbit)
+  const a = t * 0.27;
+  lspot.position.x = Math.cos(a) * 2.8;
+  lspot.position.z = Math.sin(a) * 2.8;
+  lspot.material.opacity = 0.30 + Math.sin(t * 1.15) * 0.07;
+
+  // Bell gentle sway
+  bellGrp.children[1].rotation.z = Math.sin(t * 0.8) * 0.04;
+}
+
+// ══════════════════════════════════════════════════
+// LOOP
+// ══════════════════════════════════════════════════
+function loop() {
+  requestAnimationFrame(loop);
+  simulate();
+  updateVisuals(Date.now() * 0.001);
+  renderer.render(scene, cam);
+}
+
+loop();
+</script>
+
+</body>
+</html>

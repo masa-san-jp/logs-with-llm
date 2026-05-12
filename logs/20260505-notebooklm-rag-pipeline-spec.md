@@ -6,6 +6,22 @@
 
 ---
 
+## 📌 導入状況（2026-05-12 追記）
+
+**前提となる `notebooklm-mcp-cli` の導入は完了済み**（実機 v0.6.9）。本仕様書のパイプライン（分岐 A/B）実装は **未着手**。
+
+| 構成要素 | 状態 |
+|---------|------|
+| `nlm` CLI / `notebooklm-mcp` MCP サーバー | ✅ 導入済み |
+| Claude Code MCP 統合 | ✅ 導入済み |
+| `nlm-skill`（Claude Code 操作ガイド） | ✅ 導入済み |
+| 分岐 A：Claude Vision + Deep Research パイプライン | ⏸ 未着手 |
+| 分岐 B：LM Studio + Brave Search パイプライン | ⏸ 未着手 |
+
+詳細な導入手順・実機検証ログは前段ログ `logs/20260430-notebooklm-mcp-cli-rag.md` の §「導入状況」を参照。
+
+---
+
 ## 1. 目的
 
 検索クエリを起点に、
@@ -675,3 +691,4 @@ LM_STUDIO_VISION_MODEL=llava-v1.6-mistral-7b
 | 日付 | 改訂内容 |
 |------|---------|
 | 2026-05-05 | 初版作成（共通部 + 分岐 A/B 仕様） |
+| 2026-05-12 | 前提コンポーネント（notebooklm-mcp-cli / Claude Code MCP 統合 / nlm-skill）の導入完了を冒頭に追記 |

@@ -6,6 +6,30 @@
 
 ---
 
+## 📌 導入状況（2026-05-12 追記）
+
+ローカル環境への導入は **完了**。
+
+| 項目 | 状態 | 備考 |
+|------|------|------|
+| `notebooklm-mcp-cli` インストール | ✅ | 実機は **v0.6.9**（本文記載 v0.6.1 より新しい版） |
+| Google 認証 | ✅ | クッキー保存済み |
+| Claude Code MCP 統合 | ✅ | `~/.claude.json` に `notebooklm-mcp` 登録済み |
+| `nlm-skill`（Claude Code 操作ガイド） | ✅ | `~/.claude/skills/nlm-skill/` にインストール済み |
+
+導入コマンド（実機で実行済み）：
+
+```bash
+uv tool install notebooklm-mcp-cli
+nlm login
+claude mcp add --scope user notebooklm-mcp notebooklm-mcp
+nlm skill install claude-code
+```
+
+動作確認は `nlm doctor` で実施。なお v0.6.9 では `nlm auth status` ではなく `nlm login --check` または `nlm doctor` を使用する点に注意。
+
+---
+
 ## 概要
 
 NotebookLM MCP CLIは、Google NotebookLMをプログラマティックに操作するPythonパッケージ。CLIツール（`nlm`）とMCPサーバー（`notebooklm-mcp`）を一体提供し、Claude Codeからの直接操作を可能にする。

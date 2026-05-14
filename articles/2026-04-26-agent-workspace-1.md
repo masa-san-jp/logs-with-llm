@@ -1,11 +1,9 @@
 ---
 title: "全員が経営者になる時代：AIエージェントチームを自分で作って気づいたこと"
 emoji: "🤖"
-date: "2026-04-26"
-type: "idea"
-tags: ["AIエージェント", "チーム運営", "経営", "自動化"]
-author: "masa_san"
-draft: true
+type: "tech"
+topics: ["AIエージェント", "チーム運営", "自動化", "経営", "Claude Code", "GitHub Copilot"]
+published: true
 ---
 
 # 全員が経営者になる時代：AIエージェントチームを自分で作って気づいたこと

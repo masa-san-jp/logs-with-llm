@@ -2,7 +2,7 @@
 title: "AIチームを率いる：Agent Workplace 再編の思想"
 emoji: "🤖"
 type: "tech"
-topics: ["AI", "チーム運営", "組織設計", "エージェント", "R&D"]
+topics: ["AI", "組織論", "チーム運営", "マルチエージェント", "R&D"]
 published: true
 ---
 

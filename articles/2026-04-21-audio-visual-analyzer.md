@@ -1,11 +1,9 @@
 ---
 title: "「ちょうどいい」ツールを8時間で作る──Audio-visual-analyzer 開発秘話"
 emoji: "🎵"
-date: "2024-06-01"
 type: "tech"
-tags: ["Webアプリ", "JavaScript", "開発秘話"]
-author: "masa_san"
-draft: true
+topics: ["web", "javascript", "開発秘話", "音声ビジュアライザー", "AI協働"]
+published: true
 ---
 
 # 「ちょうどいい」ツールを8時間で作る──Audio-visual-analyzer 開発秘話

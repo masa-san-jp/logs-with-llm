@@ -1,0 +1,205 @@
+# リファレンス: https://zenn.dev/zenn/articles/zenn-cli-guide
+name: Auto Front Matter for Articles
+
+on:
+  push:
+    paths:
+      - "articles/**/*.md"
+  workflow_dispatch:
+    inputs:
+      files:
+        description: "対象ファイル（スペース区切り、省略時は全記事）"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+  models: read
+
+concurrency:
+  group: auto-front-matter-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  generate-front-matter:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Collect changed markdown files
+        id: changed
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            INPUT_FILES="${{ inputs.files }}"
+            if [[ -n "$INPUT_FILES" ]]; then
+              FILES=$(echo "$INPUT_FILES" | tr ' ' '\n' | grep -E '^articles/.*\.md$' || true)
+            else
+              FILES=$(find articles -name '*.md' | sort || true)
+            fi
+          else
+            BEFORE="${{ github.event.before }}"
+            SHA="${{ github.sha }}"
+            if [[ "$BEFORE" == "0000000000000000000000000000000000000000" ]]; then
+              FILES=$(git diff-tree --no-commit-id --name-only -r "$SHA" | grep -E '^articles/.*\.md$' || true)
+            else
+              FILES=$(git diff --name-only "$BEFORE" "$SHA" | grep -E '^articles/.*\.md$' || true)
+            fi
+          fi
+          {
+            echo "files<<EOF"
+            echo "$FILES"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Generate and insert front matter
+        if: steps.changed.outputs.files != ''
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHANGED_FILES: ${{ steps.changed.outputs.files }}
+          MODEL: openai/gpt-4.1-mini
+          API_ENDPOINT: https://models.github.ai/inference/chat/completions
+        run: |
+          python - <<'PY'
+          import json
+          import sys
+          import os
+          import re
+          import textwrap
+          import urllib.error
+          import urllib.request
+          from pathlib import Path
+
+          # Front Matter テンプレートは Zenn CLI ガイドに準拠しています
+          # https://zenn.dev/zenn/articles/zenn-cli-guide
+          SYSTEM_PROMPT = textwrap.dedent("""\
+          ユーザーの入力を分析して、ZennのFront Matterを生成してテンプレートに基づいて出力してください。
+          ユーザーの作業負荷軽減が目的なので、目的外の余計な出力は不要です。Front Matterのみを常にコードブロックに出力してください。
+          "---"を省略してはいけません。
+
+          Front Matter出力テンプレート:
+          ---
+          title: "" # 記事のタイトル
+          emoji: "" # アイキャッチとして使われる絵文字（1文字だけ）
+          type: "tech" # tech: 技術記事 / idea: アイデア記事
+          topics: [] # タグ。["markdown", "rust", "aws"]のように指定する
+          published: true # 公開設定（falseにすると下書き）
+          ---
+          """)
+
+          def strip_front_matter(text: str) -> str:
+              if not text.startswith("---\n"):
+                  return text
+              m = re.match(r"^---\n[\s\S]*?\n---\n?", text)
+              if m:
+                  return text[m.end():]
+              return text
+
+          def extract_front_matter(text: str) -> str:
+              block = re.search(r"```(?:markdown|md|yaml|yml)?\s*(---[\s\S]*?---)\s*```", text, re.IGNORECASE)
+              if block:
+                  return block.group(1).strip() + "\n"
+              raw = re.search(r"---[\s\S]*?---", text)
+              if raw:
+                  return raw.group(0).strip() + "\n"
+              raise RuntimeError("Front Matter を抽出できませんでした。")
+
+          def replace_front_matter(original: str, new_fm: str) -> str:
+              body = strip_front_matter(original).lstrip("\n")
+              return f"{new_fm}\n{body}"
+
+          def request_front_matter(token: str, model: str, user_prompt: str) -> str:
+              payload = {
+                  "model": model,
+                  "messages": [
+                      {"role": "system", "content": SYSTEM_PROMPT},
+                      {"role": "user", "content": user_prompt},
+                  ],
+                  "temperature": 0.2,
+              }
+              req = urllib.request.Request(
+                  os.environ["API_ENDPOINT"],
+                  data=json.dumps(payload).encode("utf-8"),
+                  headers={
+                      "Content-Type": "application/json",
+                      "Authorization": f"Bearer {token}",
+                  },
+                  method="POST",
+              )
+              try:
+                  with urllib.request.urlopen(req, timeout=120) as res:
+                      raw = res.read().decode("utf-8")
+              except urllib.error.HTTPError as e:
+                  detail = e.read().decode("utf-8", errors="replace")
+                  raise RuntimeError(f"モデルAPI呼び出しに失敗しました: HTTP {e.code} {detail}") from e
+              except urllib.error.URLError as e:
+                  raise RuntimeError(f"モデルAPI呼び出しに失敗しました: {e.reason}") from e
+
+              try:
+                  response = json.loads(raw)
+              except json.JSONDecodeError as e:
+                  raise RuntimeError(f"APIレスポンスがJSONではありません: {raw[:500]}") from e
+
+              choices = response.get("choices")
+              if not isinstance(choices, list) or not choices:
+                  raise RuntimeError(f"APIレスポンスにchoicesがありません: {response}")
+              message = choices[0].get("message", {})
+              content = message.get("content")
+              if not isinstance(content, str) or not content.strip():
+                  raise RuntimeError(f"APIレスポンスにmessage.contentがありません: {response}")
+              return content
+
+          token = os.environ["GITHUB_TOKEN"]
+          model = os.getenv("MODEL", "openai/gpt-4.1-mini")
+          files = [f.strip() for f in os.getenv("CHANGED_FILES", "").splitlines() if f.strip()]
+          had_error = False
+
+          def escape_github_actions_command(value: str) -> str:
+              return str(value).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+          for file_path in files:
+              try:
+                  path = Path(file_path)
+                  if not path.exists():
+                      continue
+                  original = path.read_text(encoding="utf-8")
+                  body_for_prompt = strip_front_matter(original)
+                  user_prompt = f"""以下のMarkdown記事本文から、Zenn向けFront Matterを生成してください。
+
+          記事本文:
+          {body_for_prompt}
+          """
+                  content = request_front_matter(token, model, user_prompt)
+                  front_matter = extract_front_matter(content)
+                  updated = replace_front_matter(original, front_matter)
+                  if updated != original:
+                      path.write_text(updated, encoding="utf-8")
+              except Exception as e:
+                  had_error = True
+                  escaped_file_path = escape_github_actions_command(file_path)
+                  escaped_message = escape_github_actions_command(f"Front Matter生成に失敗しました: {e}")
+                  print(f"::error file={escaped_file_path}::{escaped_message}")
+
+          if had_error:
+              sys.exit(1)
+          PY
+
+      - name: Commit and push changes
+        if: steps.changed.outputs.files != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A articles
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "chore: auto insert front matter [skip ci]"
+          git push

@@ -7,6 +7,7 @@
 ## 主なディレクトリ
 - `logs/`: LLM との対話や作業メモ
 - `blog/`: 週次ブログの生成結果
+- `articles/`: Zenn 向け記事原稿
 - `prompts/`: 会話や執筆に使うプロンプト
 - `scripts/`: GitHub Actions から実行する Python スクリプト
 - `scripts/tests/`: 自動化スクリプトのテスト
@@ -26,6 +27,11 @@
 - 内容: README、`prompts/`、`blog/`、`logs/` を棚卸しし、次に取り組むテーマの GitHub Issue を提案
 - 詳細: `docs/weekly-doc-goal-issue-spec.md`
 
+### 3. Zenn 記事 Front Matter 自動補完
+- ワークフロー: `.github/workflows/auto-front-matter.yml`
+- 対象: `articles/**/*.md`
+- 内容: GitHub Models を使って Zenn の Front Matter を生成・更新し、差分があればコミット
+
 ## docs ディレクトリ
 - `docs/README.md`: `docs/` 配下の案内
 - `docs/weekly-blog-generator-spec.md`: 週次ブログ生成の設計仕様書
@@ -40,5 +46,6 @@ python -m pytest -q scripts/tests
 
 ## 運用メモ
 - 週次処理の詳細仕様は `docs/` を参照してください
+- Zenn 向けの記事原稿は `articles/` に置き、Front Matter は必要に応じて GitHub Actions で補完します
 - GitHub Actions の入力・出力・成果物を変更した場合は README と `docs/` を同時に更新してください
 - 認証情報や秘密情報はリポジトリ外の設定で管理し、このリポジトリ内の文書には書かない方針です

@@ -33,18 +33,20 @@ jobs:
       - name: Collect changed markdown files
         id: changed
         shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_FILES: ${{ inputs.files }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            INPUT_FILES="${{ inputs.files }}"
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
             if [[ -n "$INPUT_FILES" ]]; then
               FILES=$(echo "$INPUT_FILES" | tr ' ' '\n' | grep -E '^articles/.*\.md$' || true)
             else
               FILES=$(find articles -name '*.md' | sort || true)
             fi
           else
-            BEFORE="${{ github.event.before }}"
-            SHA="${{ github.sha }}"
             if [[ "$BEFORE" == "0000000000000000000000000000000000000000" ]]; then
               FILES=$(git diff-tree --no-commit-id --name-only -r "$SHA" | grep -E '^articles/.*\.md$' || true)
             else
@@ -92,13 +94,58 @@ jobs:
           ---
           """)
 
+          FRONT_MATTER_RE = re.compile(r"^---\n(?P<front_matter>[\s\S]*?)\n---\n?", re.MULTILINE)
+
+          def split_front_matter(text: str) -> tuple[str | None, str]:
+              m = FRONT_MATTER_RE.match(text)
+              if not m:
+                  return None, text
+              return m.group("front_matter"), text[m.end():]
+
           def strip_front_matter(text: str) -> str:
-              if not text.startswith("---\n"):
-                  return text
-              m = re.match(r"^---\n[\s\S]*?\n---\n?", text)
-              if m:
-                  return text[m.end():]
-              return text
+              _, body = split_front_matter(text)
+              return body
+
+          def extract_front_matter_value(front_matter: str, key: str) -> str | None:
+              m = re.search(rf"^{re.escape(key)}:\s*(.+?)\s*$", front_matter, re.MULTILINE)
+              if not m:
+                  return None
+              return m.group(1).strip()
+
+          def normalize_topics(value: str) -> str:
+              return value if value.startswith("[") else f"[{value}]"
+
+          def preserve_existing_front_matter(original: str) -> str | None:
+              front_matter, body = split_front_matter(original)
+              if front_matter is None:
+                  return None
+
+              title = extract_front_matter_value(front_matter, "title")
+              emoji = extract_front_matter_value(front_matter, "emoji")
+              article_type = extract_front_matter_value(front_matter, "type")
+              topics = extract_front_matter_value(front_matter, "topics")
+              tags = extract_front_matter_value(front_matter, "tags")
+              published = extract_front_matter_value(front_matter, "published")
+              draft = extract_front_matter_value(front_matter, "draft")
+
+              if not title or not emoji or not article_type or not (topics or tags):
+                  return None
+
+              if published is None:
+                  published = "false" if draft == "true" else "true"
+
+              normalized = "\n".join([
+                  "---",
+                  f"title: {title}",
+                  f"emoji: {emoji}",
+                  f"type: {article_type}",
+                  f"topics: {normalize_topics(topics or tags or '[]')}",
+                  f"published: {published}",
+                  "---",
+                  "",
+                  body.lstrip("\n"),
+              ])
+              return normalized
 
           def extract_front_matter(text: str) -> str:
               block = re.search(r"```(?:markdown|md|yaml|yml)?\s*(---[\s\S]*?---)\s*```", text, re.IGNORECASE)
@@ -168,6 +215,11 @@ jobs:
                   if not path.exists():
                       continue
                   original = path.read_text(encoding="utf-8")
+                  preserved = preserve_existing_front_matter(original)
+                  if preserved is not None:
+                      if preserved != original:
+                          path.write_text(preserved, encoding="utf-8")
+                      continue
                   body_for_prompt = strip_front_matter(original)
                   user_prompt = f"""以下のMarkdown記事本文から、Zenn向けFront Matterを生成してください。
 

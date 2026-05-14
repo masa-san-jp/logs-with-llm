@@ -2,8 +2,8 @@
 title: "チャットの✍️リアクション1つで、タスクが自動でシートに記録される仕組みを作った話"
 emoji: "✍️"
 type: "tech"
-topics: ["google-workspace", "task-management", "automation", "google-apps-script", "no-code"]
-published: true
+topics: ["Google Workspace", "タスク管理", "自動化"]
+published: false
 ---
 
 # チャットの✍️リアクション1つで、タスクが自動でシートに記録される仕組みを作った話

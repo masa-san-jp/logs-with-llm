@@ -2,8 +2,8 @@
 title: "「ちょうどいい」ツールを8時間で作る──Audio-visual-analyzer 開発秘話"
 emoji: "🎵"
 type: "tech"
-topics: ["web", "javascript", "開発秘話", "音声ビジュアライザー", "AI協働"]
-published: true
+topics: ["Webアプリ", "JavaScript", "開発秘話"]
+published: false
 ---
 
 # 「ちょうどいい」ツールを8時間で作る──Audio-visual-analyzer 開発秘話

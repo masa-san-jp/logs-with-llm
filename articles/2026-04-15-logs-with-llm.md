@@ -2,8 +2,8 @@
 title: "LLMとの対話を”往復書簡”として残す――マルチLLM時代の意思決定ログ管理術"
 emoji: "📝"
 type: "tech"
-topics: ["LLM", "ログ管理", "GitHub", "議事録", "ワークフロー"]
-published: true
+topics: ["LLM", "ログ管理", "GitHub", "議事録"]
+published: false
 ---
 
 # LLMとの対話を”往復書簡”として残す――マルチLLM時代の意思決定ログ管理術

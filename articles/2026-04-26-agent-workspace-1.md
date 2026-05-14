@@ -1,9 +1,9 @@
 ---
 title: "全員が経営者になる時代：AIエージェントチームを自分で作って気づいたこと"
 emoji: "🤖"
-type: "tech"
-topics: ["AIエージェント", "チーム運営", "自動化", "経営", "Claude Code", "GitHub Copilot"]
-published: true
+type: "idea"
+topics: ["AIエージェント", "チーム運営", "経営", "自動化"]
+published: false
 ---
 
 # 全員が経営者になる時代：AIエージェントチームを自分で作って気づいたこと

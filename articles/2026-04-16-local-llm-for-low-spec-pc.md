@@ -2,8 +2,8 @@
 title: "低スペックPCで動くローカルLLM——全国店舗へのAI展開を目指した開発者が見えてきたもの"
 emoji: "🤖"
 type: "tech"
-topics: ["local-llm", "AI", "低スペックPC", "Ollama", "Gemma4E2B", "Tauri", "Rust", "React", "Zustand"]
-published: true
+topics: ["local-llm", "AI", "低スペックPC"]
+published: false
 ---
 
 # 低スペックPCで動くローカルLLM——全国店舗へのAI展開を目指した開発者が見えてきたもの

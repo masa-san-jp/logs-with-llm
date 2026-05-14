@@ -2,8 +2,8 @@
 title: "file-spliter：ローカルLLM時代のファイル分割ツール"
 emoji: "🗂"
 type: "tech"
-topics: ["file-spliter", "LLM", "ファイル分割", "ffmpeg", "Python", "AIエージェント", "開発プロセス"]
-published: true
+topics: ["file-spliter", "ローカルLLM", "ファイル分割"]
+published: false
 ---
 
 # file-spliter：ローカルLLM時代のファイル分割ツール

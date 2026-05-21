@@ -1,4 +1,3 @@
-```markdown
 # Codex CLI と LM Studio を活用した  
 MacBook Pro M5 上での複数サブエージェント並列実行による  
 コードレビューおよびバグ発見の包括的レポート

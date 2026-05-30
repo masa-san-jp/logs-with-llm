@@ -405,7 +405,7 @@ def build_source_cards(log_files_dict: dict[str, str]) -> str:
     """Build a structured block of Source Cards for each non-empty log file."""
     cards: list[str] = []
 
-    for source_name, content in log_files_dict.items():
+    for source_name, content in sorted(log_files_dict.items()):
         if not content.strip():
             continue
 
@@ -423,7 +423,9 @@ def build_source_cards(log_files_dict: dict[str, str]) -> str:
 
         if excerpts:
             for excerpt in excerpts:
-                lines.append(f"  - {excerpt}")
+                # Collapse internal newlines so each excerpt stays on one bullet line
+                single_line = " ".join(excerpt.split())
+                lines.append(f"  - {single_line}")
         else:
             lines.append("  - (No suitable raw excerpt found.)")
 

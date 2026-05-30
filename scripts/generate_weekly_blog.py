@@ -645,37 +645,34 @@ def build_prompt(
             "   ログの実際のテーマを反映した見出しを選ぶこと。"
         )
 
+        task_instruction = (
+            "Write an engaging blog post in Markdown based on the decision logs below.\n"
+            "The post should feel like a genuine personal reflection — not a dry summary."
+        )
+
     else:
         role_text = (
-            "You are a writer with the following persona:\n"
-            "An observer and experimenter with quiet but sustained passion.\n"
-            "A humble inquirer who presents ideas as hypotheses, not assertions.\n"
-            "A creator who always connects insights back to their own practice.\n"
-            "A thinker who decomposes and reconnects concepts.\n"
-            'Someone who views the world through the lens of "mechanisms" and "systems".\n'
+            "You are a technical writer documenting weekly research and experimentation.\n"
+            "Your style is precise, informative, and analytical — closer to a research note or technical essay than a personal blog.\n"
+            "You favor clarity and insight over warmth and personal expression.\n"
+            "You focus on patterns, design decisions, and implications rather than emotions or reactions.\n"
             f"Today is {date_str}."
         )
 
         language_guidance = (
             "- Write in first person, in English (the logs may be in Japanese; translate and interpret)\n"
-            "- Hedging ratio: Use assertive and hedged expressions at roughly 6:4 to 5:5."
-            ' Prefer: "I think…", "It seems that…", "One might argue…", "Perhaps…", "I wonder whether…"\n'
-            "- Opening: Begin with one of — (a) a concrete fact or observation, (b) a situational setup, (c) a brief backstory\n"
-            '- Headings: Use "Concept: Angle" format for all H2 headings. Avoid chronological labels (Step 1 / Next / Finally)\n'
-            "- Paragraphs: 1–3 sentences per paragraph. Break long blocks with line breaks\n"
-            "- Vocabulary injection is optional. If used, keep it to 3–6 instances.\n"
-            "- Abstract words such as mechanism, apparatus, texture, granularity, and hypothesis should be used only when they clarify a concrete source detail.\n"
-            "- Do not repeat the same abstract motif across multiple sections.\n"
-            "- Prefer concrete project names, tools, design decisions, comparison points, and source-specific details over abstract phrasing.\n"
-            '- Connectors: Scatter: "That said,", "In other words,", "On the other hand,", "If so,", "One might wonder whether", "Conversely,"\n'
-            "- Thinking patterns: Leave traces of (a) decomposing abstraction into 2–3 elements,"
-            " (b) micro↔macro oscillation, (c) contrast pairs (digital/physical, local/global, explicit/implicit)\n"
-            "- Closing: End with connection to own practice, universalization of the theme, a quiet closing remark, or publication date\n"
-            '- Forbidden words: Avoid "amazing", "awesome", "literally", "totally", "absolutely", "definitely",'
-            ' "it\'s insane that", slang intensifiers, and emojis in body text\n'
-            '- Self-reference: Include 1–2 explicit "I think / I believe / I suspect" phrases at section transitions\n'
-            "- Be specific: mention project names, tools, and concrete outcomes\n"
-            "- Total length: around 2000–3000 characters"
+            "- Maintain analytical distance; avoid emotional or subjective reactions\n"
+            "- Prefer clear, declarative sentences over hedged or speculative phrasing\n"
+            "- Opening (1–2 sentences): state the week's central finding, question, or area of investigation\n"
+            "- Headings: describe what was investigated, built, or decided — prefer concrete subjects over abstract concepts\n"
+            "- Paragraphs: 2–4 sentences; informative and precise\n"
+            "- No vocabulary injection; use technical terms from the source logs directly\n"
+            '- Connectors: prefer "This suggests", "The implication is", "A key finding was", "In contrast", "As a result"\n'
+            "- Closing: synthesize the week's findings or implications — what the work points toward technically or conceptually\n"
+            "- Forbidden: emotional adjectives, slang intensifiers, emojis, first-person feelings"
+            ' (e.g., "I felt", "I was excited", "I enjoyed")\n'
+            "- Be specific: mention project names, tools, design decisions, and concrete outcomes\n"
+            "- Total length: around 1500–2500 characters"
         )
 
         coverage_requirements = (
@@ -693,7 +690,7 @@ def build_prompt(
             "Constraints (strictly follow):\n"
             "- Do not introduce topics, proper nouns, episodes, or people not present in the source logs\n"
             "- Do not alter the stance or position of arguments in the logs\n"
-            "- Do not over-inject vocabulary (3–6 instances maximum, optional)\n"
+            "- Do not use abstract vocabulary for its own sake; use technical terms from the source logs\n"
             "- Do not fabricate emotions or reactions\n"
             "- Do not increase or decrease the critical intensity toward others' work\n"
             "- Do not introduce new themes not analysed in the source\n"
@@ -702,12 +699,11 @@ def build_prompt(
 
         final_gate = (
             "Before writing your output, confirm each of the following:\n"
-            '- [ ] Topics, claims, and proper nouns match the source logs\n'
-            '- [ ] The post reads as written by someone who "observes, decomposes, and connects to practice"\n'
-            "- [ ] Assertions and hedged expressions are appropriately mixed\n"
-            "- [ ] At least one concrete↔abstract connection is present\n"
-            "- [ ] The closing connects to own practice or universalises the theme\n"
-            "- [ ] Vocabulary injection feels natural and is not excessive\n"
+            "- [ ] Topics, claims, and proper nouns match the source logs\n"
+            "- [ ] The tone is analytical and informative, not personal or emotional\n"
+            "- [ ] Personal feelings and reactions are absent from the text\n"
+            "- [ ] The closing synthesizes findings or implications without personal reflection\n"
+            "- [ ] Technical terms are used precisely, from the source logs\n"
             "- [ ] Multiple Source Cards are concretely reflected in the body\n"
             "- [ ] The article is not dominated by a single source\n"
             "- [ ] The post shows what was investigated, built, compared, or decided, not only an abstract theme"
@@ -715,18 +711,22 @@ def build_prompt(
 
         required_structure = (
             "Required structure:\n"
-            "1. `# <Title>` — a short, catchy, article-style title in 30 characters or fewer"
-            " that makes the reader feel curious, excited, or emotionally engaged; do not use a generic date-based title\n"
-            "2. An opening paragraph (2–3 sentences) using one of: fact presentation / situational setup / backstory\n"
-            "3. Free-form body sections using H2 headings in \"Concept: Angle\" format.\n"
-            "   Do NOT use fixed section names (Highlights / What I Worked On / etc.).\n"
-            "   Choose headings that reflect the actual themes in the logs."
+            "1. `# <Title>` — concise, descriptive title stating the subject matter; 50 characters or fewer\n"
+            "2. Opening (1–2 sentences): state the week's central finding, question, or area of investigation\n"
+            "3. Body sections using H2 headings that describe what was investigated, built, or decided.\n"
+            "   Do NOT use fixed section names (Highlights / Summary / etc.).\n"
+            '   Do NOT use vague abstract headings — prefer concrete subjects'
+            ' (e.g., "DB Schema: Event Sourcing Approach", "Agent Aiko: Persistent Persona Design").'
+        )
+
+        task_instruction = (
+            "Write a research note in Markdown based on the decision logs below.\n"
+            "The post should read as a technical research document — analytical, precise, and informative."
         )
 
     return f"""{role_text}
 
-Write an engaging blog post in Markdown based on the decision logs below.
-The post should feel like a genuine personal reflection — not a dry summary.
+{task_instruction}
 
 {required_structure}
 

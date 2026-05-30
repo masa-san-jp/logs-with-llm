@@ -197,9 +197,11 @@ class TestBuildPrompt:
         assert "Previous blog post" not in prompt
 
     def test_includes_prompt_guidance_strings(self):
-        prompt = gen.build_prompt("logs", "cards", "capsule", date(2026, 3, 10), "en")
-        assert "Concept: Angle" in prompt
-        assert "Before writing your output, confirm each of the following" in prompt
+        # English uses research-note style; Japanese uses "Concept: Angle" essay format
+        prompt_ja = gen.build_prompt("logs", "cards", "capsule", date(2026, 3, 10), "ja")
+        assert "概念：切り口" in prompt_ja
+        prompt_en = gen.build_prompt("logs", "cards", "capsule", date(2026, 3, 10), "en")
+        assert "Before writing your output, confirm each of the following" in prompt_en
 
     def test_japanese_prompt_requests_japanese_output(self):
         prompt = gen.build_prompt("logs", "", "", date(2026, 3, 10), "ja")
@@ -258,12 +260,30 @@ class TestBuildPrompt:
         assert "複数の Source Card が本文に具体的に反映されている" in prompt
         assert "1つの Source だけに記事が偏っていない" in prompt
 
-    def test_vocabulary_injection_relaxed_en(self):
+    def test_vocabulary_injection_removed_en(self):
         prompt = gen.build_prompt("logs", "", "", date(2026, 3, 10), "en")
-        assert "optional" in prompt
-        assert "3–6" in prompt
-        # Old forced injection count should not appear
+        # Old forced/optional injection guidance gone
+        assert "Vocabulary injection is optional" not in prompt
         assert "5–15" not in prompt
+        assert "3–6 instances" not in prompt
+
+    def test_en_prompt_analytical_style(self):
+        prompt = gen.build_prompt("logs", "", "", date(2026, 3, 10), "en")
+        assert "analytical" in prompt
+
+    def test_en_prompt_no_emotional_persona(self):
+        prompt = gen.build_prompt("logs", "", "", date(2026, 3, 10), "en")
+        assert "quiet but sustained passion" not in prompt
+        assert "humble inquirer" not in prompt
+
+    def test_en_prompt_research_note_task(self):
+        prompt = gen.build_prompt("logs", "", "", date(2026, 3, 10), "en")
+        assert "research note" in prompt
+
+    def test_en_prompt_final_gate_checks_tone(self):
+        prompt = gen.build_prompt("logs", "", "", date(2026, 3, 10), "en")
+        assert "analytical and informative" in prompt
+        assert "Personal feelings and reactions are absent" in prompt
 
     def test_vocabulary_injection_relaxed_ja(self):
         prompt = gen.build_prompt("logs", "", "", date(2026, 3, 10), "ja")

@@ -1,6 +1,7 @@
 """Unit tests for generate_weekly_blog.py – date parsing and log selection."""
 
 import json
+import os
 import sys
 import types
 from datetime import date, timedelta
@@ -170,29 +171,105 @@ class TestBlogOutputPath:
 
 class TestBuildPrompt:
     def test_contains_date(self):
-        prompt = gen.build_prompt("some logs", "", date(2026, 3, 10), "en")
+        prompt = gen.build_prompt("some logs", "", "", date(2026, 3, 10), "en")
         assert "2026-03-10" in prompt
 
     def test_contains_logs(self):
-        prompt = gen.build_prompt("MY_SPECIAL_LOG_CONTENT", "", date(2026, 3, 10), "en")
+        prompt = gen.build_prompt("MY_SPECIAL_LOG_CONTENT", "", "", date(2026, 3, 10), "en")
         assert "MY_SPECIAL_LOG_CONTENT" in prompt
 
-    def test_includes_previous_blog(self):
-        prompt = gen.build_prompt("logs", "PREV_BLOG_CONTENT", date(2026, 3, 10), "en")
-        assert "PREV_BLOG_CONTENT" in prompt
+    def test_includes_source_cards(self):
+        prompt = gen.build_prompt("logs", "## Source Card\n\n- source: logs/a.md", "", date(2026, 3, 10), "en")
+        assert "logs/a.md" in prompt
 
-    def test_no_previous_blog(self):
-        prompt = gen.build_prompt("logs", "", date(2026, 3, 10), "en")
+    def test_includes_prev_style_capsule(self):
+        prompt = gen.build_prompt("logs", "", "## Previous Style Capsule\n\nOld title", date(2026, 3, 10), "en")
+        assert "Previous Style Capsule" in prompt
+        assert "Old title" in prompt
+
+    def test_no_source_cards_section_when_empty(self):
+        prompt = gen.build_prompt("logs", "", "", date(2026, 3, 10), "en")
+        assert "Source cards with raw excerpts" not in prompt
+
+    def test_no_prev_style_section_when_empty(self):
+        prompt = gen.build_prompt("logs", "", "", date(2026, 3, 10), "en")
+        assert "Previous style reference" not in prompt
         assert "Previous blog post" not in prompt
 
     def test_includes_prompt_guidance_strings(self):
-        prompt = gen.build_prompt("logs", "prev", date(2026, 3, 10), "en")
+        prompt = gen.build_prompt("logs", "cards", "capsule", date(2026, 3, 10), "en")
         assert "Concept: Angle" in prompt
         assert "Before writing your output, confirm each of the following" in prompt
 
     def test_japanese_prompt_requests_japanese_output(self):
-        prompt = gen.build_prompt("logs", "", date(2026, 3, 10), "ja")
+        prompt = gen.build_prompt("logs", "", "", date(2026, 3, 10), "ja")
         assert "「私」に統一" in prompt
+
+    def test_includes_source_cards_section_header(self):
+        prompt = gen.build_prompt(
+            logs_text="summary text",
+            source_cards="## Source Card\n\n- source: logs/a.md",
+            prev_style_capsule="",
+            post_date=date(2026, 5, 30),
+            language="ja",
+        )
+        assert "Source cards with raw excerpts" in prompt or "Source Card" in prompt
+        assert "logs/a.md" in prompt
+
+    def test_includes_coverage_requirements_en(self):
+        prompt = gen.build_prompt(
+            logs_text="summary text",
+            source_cards="## Source Card\n\n- source: logs/a.md",
+            prev_style_capsule="",
+            post_date=date(2026, 5, 30),
+            language="en",
+        )
+        assert "Coverage requirements" in prompt
+        assert "Do not let one source dominate" in prompt
+
+    def test_includes_coverage_requirements_ja(self):
+        prompt = gen.build_prompt(
+            logs_text="summary text",
+            source_cards="",
+            prev_style_capsule="",
+            post_date=date(2026, 5, 30),
+            language="ja",
+        )
+        assert "カバレッジ要件" in prompt
+
+    def test_includes_previous_style_capsule_content(self):
+        prompt = gen.build_prompt(
+            logs_text="summary text",
+            source_cards="## Source Card\n\n- source: logs/a.md",
+            prev_style_capsule="## Previous Style Capsule\n\n### Previous title\nOld",
+            post_date=date(2026, 5, 30),
+            language="en",
+        )
+        assert "Previous Style Capsule" in prompt
+        assert "Old" in prompt
+
+    def test_final_gate_includes_source_coverage_checks_en(self):
+        prompt = gen.build_prompt("logs", "", "", date(2026, 3, 10), "en")
+        assert "Multiple Source Cards are concretely reflected" in prompt
+        assert "not dominated by a single source" in prompt
+
+    def test_final_gate_includes_source_coverage_checks_ja(self):
+        prompt = gen.build_prompt("logs", "", "", date(2026, 3, 10), "ja")
+        assert "複数の Source Card が本文に具体的に反映されている" in prompt
+        assert "1つの Source だけに記事が偏っていない" in prompt
+
+    def test_vocabulary_injection_relaxed_en(self):
+        prompt = gen.build_prompt("logs", "", "", date(2026, 3, 10), "en")
+        assert "optional" in prompt
+        assert "3–6" in prompt
+        # Old forced injection count should not appear
+        assert "5–15" not in prompt
+
+    def test_vocabulary_injection_relaxed_ja(self):
+        prompt = gen.build_prompt("logs", "", "", date(2026, 3, 10), "ja")
+        assert "3〜6箇所" in prompt
+        # Old forced injection count should not appear
+        assert "5〜15 箇所を文脈に合わせて使用する" not in prompt
 
 
 # ---------------------------------------------------------------------------
@@ -403,3 +480,285 @@ class TestSummarizePreviousBlog:
             gen.summarize_previous_blog("en")
         source_name_used = mock_sum.call_args[0][1]
         assert source_name_used == "20260301-weekly-en.md"
+
+
+# ---------------------------------------------------------------------------
+# extract_raw_excerpts
+# ---------------------------------------------------------------------------
+
+class TestExtractRawExcerpts:
+    def test_returns_important_paragraphs(self):
+        content = """
+# Test
+
+短い説明。
+
+## 目的
+
+この設計の目的は、個人技ではなく組織運用としてAI活用を定着させることです。
+
+## その他
+
+普通の説明文です。
+"""
+        excerpts = gen.extract_raw_excerpts(content)
+        assert excerpts
+        assert any("目的" in e or "組織運用" in e for e in excerpts)
+
+    def test_empty_content_returns_empty_list(self):
+        assert gen.extract_raw_excerpts("   ") == []
+
+    def test_skips_code_fences(self):
+        content = """
+```python
+print("important but code")
+```
+
+結論として、この運用は安全性を優先する。
+"""
+        excerpts = gen.extract_raw_excerpts(content)
+        assert all("print(" not in e for e in excerpts)
+        assert any("結論" in e for e in excerpts)
+
+    def test_respects_max_excerpts(self):
+        content = "\n\n".join(
+            f"## 目的{i}\n\nこの設計の目的は重要な判断を含む段落{i}です。組織運用として評価します。" for i in range(10)
+        )
+        excerpts = gen.extract_raw_excerpts(content, max_excerpts=3)
+        assert len(excerpts) <= 3
+
+    def test_truncates_long_blocks(self):
+        long_text = "目的として、" + "あ" * 400
+        content = f"## 目的\n\n{long_text}"
+        excerpts = gen.extract_raw_excerpts(content, max_chars=350)
+        assert excerpts
+        assert all(len(e) <= 360 for e in excerpts)  # allow slight overage for punctuation
+
+    def test_skips_large_tables(self):
+        table = "\n".join(f"| col{i} | val{i} |" for i in range(10))
+        content = f"## データ\n\n{table}\n\n結論として、この比較は重要な判断材料です。"
+        excerpts = gen.extract_raw_excerpts(content)
+        # Table rows should not appear as excerpts
+        assert not any("|" in e and e.count("|") > 3 for e in excerpts)
+        assert any("結論" in e for e in excerpts)
+
+    def test_no_duplicates(self):
+        content = "## 目的\n\n同じ段落が複数回あっても、重複排除されるべきです。\n\n同じ段落が複数回あっても、重複排除されるべきです。"
+        excerpts = gen.extract_raw_excerpts(content)
+        keys = [e[:80] for e in excerpts]
+        assert len(keys) == len(set(keys))
+
+
+# ---------------------------------------------------------------------------
+# build_source_cards
+# ---------------------------------------------------------------------------
+
+class TestBuildSourceCards:
+    def test_includes_all_source_paths(self):
+        files = {
+            "logs/20260524-a.md": "## 目的\n\n重要な本文です。",
+            "logs/20260525-b.md": "## 結論\n\n別の重要な本文です。",
+        }
+        cards = gen.build_source_cards(files)
+        assert "logs/20260524-a.md" in cards
+        assert "logs/20260525-b.md" in cards
+
+    def test_includes_raw_excerpts(self):
+        files = {
+            "logs/20260524-a.md": "## 目的\n\nこの設計の目的は、運用改善です。",
+        }
+        cards = gen.build_source_cards(files)
+        assert "raw_excerpts" in cards
+        assert "運用改善" in cards
+
+    def test_skips_empty_files(self):
+        files = {
+            "logs/20260524-a.md": "   ",
+            "logs/20260525-b.md": "## 結論\n\n重要な本文です。",
+        }
+        cards = gen.build_source_cards(files)
+        assert "logs/20260524-a.md" not in cards
+        assert "logs/20260525-b.md" in cards
+
+    def test_includes_date(self):
+        files = {"logs/20260524-project.md": "## 目的\n\n重要な内容です。"}
+        cards = gen.build_source_cards(files)
+        assert "2026-05-24" in cards
+
+    def test_unknown_date_when_no_date_in_path(self):
+        files = {"logs/no-date-project.md": "## 目的\n\n重要な内容です。"}
+        cards = gen.build_source_cards(files)
+        assert "unknown" in cards
+
+    def test_empty_excerpts_placeholder(self):
+        files = {"logs/20260524-a.md": "x" * 5}  # too short to extract
+        cards = gen.build_source_cards(files)
+        assert "No suitable raw excerpt found" in cards
+
+    def test_empty_dict_returns_empty_string(self):
+        assert gen.build_source_cards({}) == ""
+
+    def test_multiple_cards_separated(self):
+        files = {
+            "logs/20260524-a.md": "## 目的\n\n重要な本文です。",
+            "logs/20260525-b.md": "## 結論\n\n別の重要な本文です。",
+        }
+        cards = gen.build_source_cards(files)
+        assert "---" in cards
+
+
+# ---------------------------------------------------------------------------
+# build_previous_style_capsule
+# ---------------------------------------------------------------------------
+
+class TestBuildPreviousStyleCapsule:
+    def test_extracts_style_elements(self, tmp_path):
+        blog_dir = tmp_path / "blog"
+        blog_dir.mkdir()
+        (blog_dir / "20260522-weekly.md").write_text(
+            "# 前回タイトル\n\n"
+            "冒頭段落1です。\n\n"
+            "冒頭段落2です。\n\n"
+            "## 見出しA\n\n"
+            "本文A。\n\n"
+            "## 見出しB\n\n"
+            "本文B。\n\n"
+            "締め段落です。\n",
+            encoding="utf-8",
+        )
+        with mock.patch.object(gen, "BLOG_DIR", blog_dir):
+            capsule = gen.build_previous_style_capsule("ja")
+
+        assert "Previous Style Capsule" in capsule
+        assert "前回タイトル" in capsule
+        assert "冒頭段落1" in capsule
+        assert "見出しA" in capsule
+        assert "締め段落" in capsule
+
+    def test_empty_when_no_previous_blog(self, tmp_path):
+        blog_dir = tmp_path / "blog"
+        blog_dir.mkdir()
+        with mock.patch.object(gen, "BLOG_DIR", blog_dir):
+            assert gen.build_previous_style_capsule("ja") == ""
+
+    def test_includes_h2_headings(self, tmp_path):
+        blog_dir = tmp_path / "blog"
+        blog_dir.mkdir()
+        (blog_dir / "20260522-weekly-en.md").write_text(
+            "# Title\n\nOpening.\n\n## Section One\n\nBody.\n\n## Section Two\n\nBody.\n\nClosing.\n",
+            encoding="utf-8",
+        )
+        with mock.patch.object(gen, "BLOG_DIR", blog_dir):
+            capsule = gen.build_previous_style_capsule("en")
+
+        assert "Section One" in capsule
+        assert "Section Two" in capsule
+
+    def test_does_not_include_full_body(self, tmp_path):
+        blog_dir = tmp_path / "blog"
+        blog_dir.mkdir()
+        body_text = "中間の本文ブロックです。この部分は含まれるべきではありません。"
+        (blog_dir / "20260522-weekly.md").write_text(
+            "# タイトル\n\n冒頭段落。\n\n## 見出し\n\n"
+            + body_text
+            + "\n\n## 見出し2\n\n別の本文。\n\n締め段落。\n",
+            encoding="utf-8",
+        )
+        with mock.patch.object(gen, "BLOG_DIR", blog_dir):
+            capsule = gen.build_previous_style_capsule("ja")
+
+        # Opening (冒頭段落) and closing (締め段落) should be present
+        assert "冒頭段落" in capsule
+        assert "締め段落" in capsule
+
+
+# ---------------------------------------------------------------------------
+# main() integration
+# ---------------------------------------------------------------------------
+
+class TestMain:
+    def _make_setup(self, tmp_path):
+        logs_dir = tmp_path / "logs"
+        logs_dir.mkdir()
+        blog_dir = tmp_path / "blog"
+        blog_dir.mkdir()
+        log_file = logs_dir / "20260524-test.md"
+        log_file.write_text("## 目的\n\nテストログです。")
+        return logs_dir, blog_dir, log_file
+
+    def test_build_source_cards_called(self, tmp_path):
+        logs_dir, blog_dir, log_file = self._make_setup(tmp_path)
+        with (
+            mock.patch.object(gen, "LOGS_DIR", logs_dir),
+            mock.patch.object(gen, "BLOG_DIR", blog_dir),
+            mock.patch.object(gen, "REPO_ROOT", tmp_path),
+            mock.patch.object(gen, "STATE_FILE", tmp_path / ".blog_state.json"),
+            mock.patch.object(gen, "build_source_cards", return_value="cards") as mock_cards,
+            mock.patch.object(gen, "build_previous_style_capsule", return_value=""),
+            mock.patch.object(gen, "summarize_log_files", return_value="summary"),
+            mock.patch.object(gen, "generate_blog_content", return_value="blog content"),
+            mock.patch.object(gen, "_save_state"),
+            mock.patch.dict(os.environ, {"BLOG_DATE": "2026-05-24"}),
+        ):
+            gen.main()
+        mock_cards.assert_called_once()
+
+    def test_build_previous_style_capsule_called_per_language(self, tmp_path):
+        logs_dir, blog_dir, log_file = self._make_setup(tmp_path)
+        with (
+            mock.patch.object(gen, "LOGS_DIR", logs_dir),
+            mock.patch.object(gen, "BLOG_DIR", blog_dir),
+            mock.patch.object(gen, "REPO_ROOT", tmp_path),
+            mock.patch.object(gen, "STATE_FILE", tmp_path / ".blog_state.json"),
+            mock.patch.object(gen, "build_source_cards", return_value=""),
+            mock.patch.object(gen, "build_previous_style_capsule", return_value="") as mock_capsule,
+            mock.patch.object(gen, "summarize_log_files", return_value="summary"),
+            mock.patch.object(gen, "generate_blog_content", return_value="blog content"),
+            mock.patch.object(gen, "_save_state"),
+            mock.patch.dict(os.environ, {"BLOG_DATE": "2026-05-24"}),
+        ):
+            gen.main()
+        assert mock_capsule.call_count == len(gen.SUPPORTED_LANGUAGES)
+
+    def test_build_prompt_receives_source_cards(self, tmp_path):
+        logs_dir, blog_dir, log_file = self._make_setup(tmp_path)
+        captured_prompts: list[tuple] = []
+
+        def fake_build_prompt(logs_text, source_cards, prev_style_capsule, post_date, language):
+            captured_prompts.append((source_cards,))
+            return "prompt"
+
+        with (
+            mock.patch.object(gen, "LOGS_DIR", logs_dir),
+            mock.patch.object(gen, "BLOG_DIR", blog_dir),
+            mock.patch.object(gen, "REPO_ROOT", tmp_path),
+            mock.patch.object(gen, "STATE_FILE", tmp_path / ".blog_state.json"),
+            mock.patch.object(gen, "build_source_cards", return_value="MY_SOURCE_CARDS"),
+            mock.patch.object(gen, "build_previous_style_capsule", return_value=""),
+            mock.patch.object(gen, "summarize_log_files", return_value="summary"),
+            mock.patch.object(gen, "build_prompt", side_effect=fake_build_prompt),
+            mock.patch.object(gen, "generate_blog_content", return_value="blog content"),
+            mock.patch.object(gen, "_save_state"),
+            mock.patch.dict(os.environ, {"BLOG_DATE": "2026-05-24"}),
+        ):
+            gen.main()
+
+        assert all(sc == "MY_SOURCE_CARDS" for sc, in captured_prompts)
+
+    def test_summarize_previous_blog_not_called_from_main(self, tmp_path):
+        logs_dir, blog_dir, log_file = self._make_setup(tmp_path)
+        with (
+            mock.patch.object(gen, "LOGS_DIR", logs_dir),
+            mock.patch.object(gen, "BLOG_DIR", blog_dir),
+            mock.patch.object(gen, "REPO_ROOT", tmp_path),
+            mock.patch.object(gen, "STATE_FILE", tmp_path / ".blog_state.json"),
+            mock.patch.object(gen, "build_source_cards", return_value=""),
+            mock.patch.object(gen, "build_previous_style_capsule", return_value=""),
+            mock.patch.object(gen, "summarize_log_files", return_value="summary"),
+            mock.patch.object(gen, "generate_blog_content", return_value="blog content"),
+            mock.patch.object(gen, "summarize_previous_blog") as mock_prev_summary,
+            mock.patch.object(gen, "_save_state"),
+            mock.patch.dict(os.environ, {"BLOG_DATE": "2026-05-24"}),
+        ):
+            gen.main()
+        mock_prev_summary.assert_not_called()

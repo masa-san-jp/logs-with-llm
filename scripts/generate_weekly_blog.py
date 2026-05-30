@@ -31,6 +31,7 @@ Environment variables:
     LOGS_DIR          path to logs directory (default: logs)
     BLOG_DIR          path to blog directory (default: blog)
     STATE_FILE        path to state JSON file (default: .blog_state.json)
+    DEBUG_PROMPT_DIR  if set, write prompts to this directory for debugging
 """
 
 import json
@@ -61,6 +62,7 @@ OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "gpt-oss:20b")
 LOGS_DIR = REPO_ROOT / os.environ.get("LOGS_DIR", "logs")
 BLOG_DIR = REPO_ROOT / os.environ.get("BLOG_DIR", "blog")
 STATE_FILE = REPO_ROOT / os.environ.get("STATE_FILE", ".blog_state.json")
+DEBUG_PROMPT_DIR = os.environ.get("DEBUG_PROMPT_DIR", "")
 
 DATE_RE = re.compile(r"\b(20\d{2})(\d{2})(\d{2})\b")
 SUPPORTED_LANGUAGES = ("ja", "en")
@@ -73,6 +75,31 @@ _SUMMARIZE_PROMPT_TEMPLATE = (
     'Be concise but complete — do not drop key facts. Write in plain prose, no headers needed.\n\n'
     'Content:\n{content}\n'
 )
+
+KEY_MARKERS = [
+    "目的",
+    "結論",
+    "評価",
+    "重要",
+    "注意",
+    "設計思想",
+    "仮説",
+    "定義",
+    "前提",
+    "課題",
+    "改善",
+    "運用",
+    "判断",
+    "つまり",
+    "一方で",
+    "だから",
+    "要するに",
+    "必要",
+    "狙い",
+    "方針",
+    "比較",
+    "リスク",
+]
 
 
 def validate_language(language: str) -> str:
@@ -265,6 +292,147 @@ def summarize_previous_blog(language: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Raw excerpt extraction
+# ---------------------------------------------------------------------------
+
+def _split_markdown_blocks(content: str) -> list[str]:
+    clean = re.sub(r'```[\s\S]*?```', '', content)
+    clean = re.sub(r'~~~[\s\S]*?~~~', '', clean)
+    blocks = re.split(r'\n{2,}', clean.strip())
+    return [b.strip() for b in blocks if b.strip()]
+
+
+def _normalize_excerpt_block(block: str) -> str:
+    return block.strip()
+
+
+def _is_excerpt_candidate(block: str) -> bool:
+    if not block:
+        return False
+    # Skip single-line headings
+    if re.match(r'^#{1,6}\s', block) and '\n' not in block:
+        return False
+    # Skip large tables
+    table_lines = [line for line in block.splitlines() if '|' in line]
+    if len(table_lines) > 5:
+        return False
+    # Skip very short fragments
+    if len(block) < 10:
+        return False
+    return True
+
+
+def _score_excerpt_candidate(block: str, index: int, blocks: list[str]) -> int:
+    score = 1
+    for marker in KEY_MARKERS:
+        if marker in block:
+            score += 2
+    # Boost if the preceding block is a heading
+    if index > 0 and re.match(r'^#{1,6}\s', blocks[index - 1]):
+        score += 2
+    if '**' in block:
+        score += 1
+    if re.search(r'\d', block):
+        score += 1
+    # Inline code, camelCase, or snake_case identifiers
+    if re.search(r'`[^`]+`|[A-Z][a-z]+[A-Z]|\b[a-z]+_[a-z]+\b', block):
+        score += 1
+    return score
+
+
+def _truncate_excerpt(text: str, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    truncated = text[:max_chars]
+    last_punc = max(
+        truncated.rfind('。'),
+        truncated.rfind('.'),
+        truncated.rfind('！'),
+        truncated.rfind('？'),
+        truncated.rfind('!'),
+        truncated.rfind('?'),
+    )
+    if last_punc > max_chars // 2:
+        return truncated[:last_punc + 1]
+    last_space = truncated.rfind(' ')
+    if last_space > max_chars // 2:
+        return truncated[:last_space].rstrip() + "..."
+    return truncated.rstrip() + "..."
+
+
+def extract_raw_excerpts(
+    content: str,
+    max_excerpts: int = 4,
+    max_chars: int = 350,
+) -> list[str]:
+    """Extract representative raw excerpts from Markdown content without calling an LLM."""
+    blocks = _split_markdown_blocks(content)
+    scored: list[tuple[int, int, str]] = []
+
+    for idx, block in enumerate(blocks):
+        normalized = _normalize_excerpt_block(block)
+        if not _is_excerpt_candidate(normalized):
+            continue
+
+        score = _score_excerpt_candidate(normalized, idx, blocks)
+        if score <= 0:
+            continue
+
+        excerpt = _truncate_excerpt(normalized, max_chars)
+        scored.append((score, -idx, excerpt))
+
+    scored.sort(reverse=True)
+
+    result: list[str] = []
+    seen: set[str] = set()
+    for _, _, excerpt in scored:
+        key = excerpt[:80]
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(excerpt)
+        if len(result) >= max_excerpts:
+            break
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Source card construction
+# ---------------------------------------------------------------------------
+
+def build_source_cards(log_files_dict: dict[str, str]) -> str:
+    """Build a structured block of Source Cards for each non-empty log file."""
+    cards: list[str] = []
+
+    for source_name, content in log_files_dict.items():
+        if not content.strip():
+            continue
+
+        d = extract_date_from_path(source_name)
+        date_text = d.isoformat() if d else "unknown"
+        excerpts = extract_raw_excerpts(content)
+
+        lines = [
+            "## Source Card",
+            "",
+            f"- source: {source_name}",
+            f"- date: {date_text}",
+            "- raw_excerpts:",
+        ]
+
+        if excerpts:
+            for excerpt in excerpts:
+                lines.append(f"  - {excerpt}")
+        else:
+            lines.append("  - (No suitable raw excerpt found.)")
+
+        cards.append("\n".join(lines))
+
+    return "\n\n---\n\n".join(cards)
+
+
+# ---------------------------------------------------------------------------
 # Previous blog context / output paths
 # ---------------------------------------------------------------------------
 
@@ -297,18 +465,111 @@ def read_previous_blog(language: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Previous style capsule
+# ---------------------------------------------------------------------------
+
+def _extract_markdown_title(markdown: str) -> str:
+    for line in markdown.splitlines():
+        line = line.strip()
+        if line.startswith("# "):
+            return line
+    return ""
+
+
+def _extract_h2_headings(markdown: str) -> list[str]:
+    headings: list[str] = []
+    for line in markdown.splitlines():
+        line = line.strip()
+        if line.startswith("## "):
+            headings.append(line[3:].strip())
+    return headings
+
+
+def _extract_opening_paragraphs(markdown: str, max_paragraphs: int = 2) -> str:
+    blocks = re.split(r'\n{2,}', markdown.strip())
+    result: list[str] = []
+    for block in blocks:
+        b = block.strip()
+        if not b:
+            continue
+        if re.match(r'^#{1,6}\s', b):
+            continue
+        result.append(b)
+        if len(result) >= max_paragraphs:
+            break
+    return "\n\n".join(result)
+
+
+def _extract_closing_paragraphs(markdown: str, max_paragraphs: int = 2) -> str:
+    blocks = re.split(r'\n{2,}', markdown.strip())
+    result: list[str] = []
+    for block in reversed(blocks):
+        b = block.strip()
+        if not b:
+            continue
+        if re.match(r'^#{1,6}\s', b):
+            continue
+        result.insert(0, b)
+        if len(result) >= max_paragraphs:
+            break
+    return "\n\n".join(result)
+
+
+def build_previous_style_capsule(language: str) -> str:
+    """Extract style reference elements from the previous blog post without calling an LLM."""
+    raw = read_previous_blog(language)
+    if not raw.strip():
+        return ""
+
+    title = _extract_markdown_title(raw)
+    opening = _extract_opening_paragraphs(raw, max_paragraphs=2)
+    headings = _extract_h2_headings(raw)
+    closing = _extract_closing_paragraphs(raw, max_paragraphs=2)
+
+    parts = ["## Previous Style Capsule", ""]
+
+    if title:
+        parts.extend(["### Previous title", title, ""])
+    if opening:
+        parts.extend(["### Opening sample", opening, ""])
+    if headings:
+        parts.append("### Heading pattern")
+        parts.extend([f"- {h}" for h in headings])
+        parts.append("")
+    if closing:
+        parts.extend(["### Closing sample", closing, ""])
+
+    return "\n".join(parts).strip()
+
+
+# ---------------------------------------------------------------------------
 # Prompt construction
 # ---------------------------------------------------------------------------
 
-def build_prompt(logs_text: str, prev_blog: str, post_date: date, language: str) -> str:
+def build_prompt(
+    logs_text: str,
+    source_cards: str,
+    prev_style_capsule: str,
+    post_date: date,
+    language: str,
+) -> str:
     language = validate_language(language)
     date_str = post_date.strftime("%Y-%m-%d")
-    prev_section = ""
-    if prev_blog:
-        prev_section = f"""
-## Previous blog post (for context — describe what changed since then)
 
-{prev_blog}
+    source_cards_section = ""
+    if source_cards:
+        source_cards_section = f"""
+## Source cards with raw excerpts
+
+{source_cards}
+"""
+
+    prev_style_section = ""
+    if prev_style_capsule:
+        prev_style_section = f"""
+## Previous style reference
+
+{prev_style_capsule}
 """
 
     if language == "ja":
@@ -325,8 +586,10 @@ def build_prompt(logs_text: str, prev_blog: str, post_date: date, language: str)
             "- 冒頭の 1〜3 文は、事実提示 / 状況設定 / 前日譚のいずれかで始める\n"
             "- 見出しは「概念：切り口」形式（H2 主体、時系列ラベル禁止）\n"
             "- 段落は 1〜3 文単位。長いブロックは改行で割る\n"
-            "- 語彙注入: 以下の core リストから 5〜15 箇所を文脈に合わせて使用する\n"
-            "  [装置, 偏在, 手触り感, 仮説, 解像度, 再現可能, 身体性, 着想, 閃き, 静かな, 実在感, 手応え, 狙いを定める]\n"
+            "- 語彙注入は任意。使う場合も3〜6箇所までに留める\n"
+            "- 「装置」「解像度」「手触り感」「仮説」などの抽象語は、具体対象を説明できる場合だけ使う\n"
+            "- 同じ抽象語を複数セクションで繰り返さない\n"
+            "- 抽象語よりも、ログに含まれる具体的な調査対象・設計判断・比較観点を優先する\n"
             "- 接続語として「〜とすると〜」「一方で〜」「〜のではないだろうか」「つまり〜」「逆に〜」を段落間に散らす\n"
             "- 思考パターン: 抽象を 2〜3 要素に分解、ミクロ↔マクロ往復、対比（デジタル/フィジカル 等）の痕跡を残す\n"
             "- 末尾近くで、自分の制作・実践への接続を 1 段落含める\n"
@@ -336,11 +599,22 @@ def build_prompt(logs_text: str, prev_blog: str, post_date: date, language: str)
             "- 文量目安: 3000〜4000 字"
         )
 
+        coverage_requirements = (
+            "カバレッジ要件:\n"
+            "- Source Card をそれぞれ別個の材料として扱う。\n"
+            "- 本文では少なくとも min(4, Source数) 個の異なる Source Card に触れる。\n"
+            "- Source が1つしかない場合を除き、1つの Source だけで記事全体を支配しない。\n"
+            "- 扱った Source ごとに、プロジェクト名、意思決定、ツール名、比較観点、数値、具体ディテールのいずれかを最低1つ残す。\n"
+            "- 複数 Source を共通テーマで統合してよいが、単一の抽象エッセイに潰さない。\n"
+            "- 見出しには抽象概念だけでなく、できるだけ具体対象を含める。\n"
+            "- カバレッジ計画やチェックリストは出力しない。"
+        )
+
         prohibitions = (
             "制約（必ず守ること）:\n"
             "- 原稿（ログ）にない題材・固有名詞・エピソード・人物を追加しない\n"
             "- 原稿の主張の向き（賛否・立場）を変えない\n"
-            "- 語彙注入は 5〜15 箇所以内に留める\n"
+            "- 語彙注入は任意とし、使用する場合は 3〜6 箇所以内に留める\n"
             "- 感情表現を捏造しない\n"
             "- 他者の作品への批判強度を勝手に増減させない\n"
             "- ログが分析していないテーマを新たに読み込まない\n"
@@ -354,7 +628,10 @@ def build_prompt(logs_text: str, prev_blog: str, post_date: date, language: str)
             "- [ ] 断定と推測が適度に混在している\n"
             "- [ ] 具体↔抽象の接続が少なくとも1箇所ある\n"
             "- [ ] 末尾に制作接続 or 普遍化が含まれる\n"
-            "- [ ] 語彙注入が自然で過剰でない"
+            "- [ ] 語彙注入が自然で過剰でない\n"
+            "- [ ] 複数の Source Card が本文に具体的に反映されている\n"
+            "- [ ] 1つの Source だけに記事が偏っていない\n"
+            "- [ ] 抽象テーマだけでなく、何を調べた・作った・比較したかが見える"
         )
 
         required_structure = (
@@ -384,9 +661,10 @@ def build_prompt(logs_text: str, prev_blog: str, post_date: date, language: str)
             "- Opening: Begin with one of — (a) a concrete fact or observation, (b) a situational setup, (c) a brief backstory\n"
             '- Headings: Use "Concept: Angle" format for all H2 headings. Avoid chronological labels (Step 1 / Next / Finally)\n'
             "- Paragraphs: 1–3 sentences per paragraph. Break long blocks with line breaks\n"
-            "- Vocabulary injection: Inject 5–15 instances of:"
-            " mechanism / apparatus, ubiquity / pervasive, tactility / texture,"
-            " granularity / resolution, hypothesis, reproducible, insight, emergent, friction, interplay\n"
+            "- Vocabulary injection is optional. If used, keep it to 3–6 instances.\n"
+            "- Abstract words such as mechanism, apparatus, texture, granularity, and hypothesis should be used only when they clarify a concrete source detail.\n"
+            "- Do not repeat the same abstract motif across multiple sections.\n"
+            "- Prefer concrete project names, tools, design decisions, comparison points, and source-specific details over abstract phrasing.\n"
             '- Connectors: Scatter: "That said,", "In other words,", "On the other hand,", "If so,", "One might wonder whether", "Conversely,"\n'
             "- Thinking patterns: Leave traces of (a) decomposing abstraction into 2–3 elements,"
             " (b) micro↔macro oscillation, (c) contrast pairs (digital/physical, local/global, explicit/implicit)\n"
@@ -398,11 +676,22 @@ def build_prompt(logs_text: str, prev_blog: str, post_date: date, language: str)
             "- Total length: around 2000–3000 characters"
         )
 
+        coverage_requirements = (
+            "Coverage requirements:\n"
+            "- Treat each Source Card as a distinct source.\n"
+            "- Cover at least min(4, number_of_sources) distinct sources in the main body.\n"
+            "- Do not let one source dominate the article unless there is only one source.\n"
+            "- Each covered source must leave at least one concrete trace: project name, decision, tool name, comparison point, number, or direct detail.\n"
+            "- You may synthesize sources under a shared theme, but do not collapse them into a single abstract essay.\n"
+            "- Prefer headings that include concrete subjects, not only abstract concepts.\n"
+            "- Do not output a checklist or coverage plan."
+        )
+
         prohibitions = (
             "Constraints (strictly follow):\n"
             "- Do not introduce topics, proper nouns, episodes, or people not present in the source logs\n"
             "- Do not alter the stance or position of arguments in the logs\n"
-            "- Do not over-inject vocabulary (5–15 instances maximum)\n"
+            "- Do not over-inject vocabulary (3–6 instances maximum, optional)\n"
             "- Do not fabricate emotions or reactions\n"
             "- Do not increase or decrease the critical intensity toward others' work\n"
             "- Do not introduce new themes not analysed in the source\n"
@@ -416,7 +705,10 @@ def build_prompt(logs_text: str, prev_blog: str, post_date: date, language: str)
             "- [ ] Assertions and hedged expressions are appropriately mixed\n"
             "- [ ] At least one concrete↔abstract connection is present\n"
             "- [ ] The closing connects to own practice or universalises the theme\n"
-            "- [ ] Vocabulary injection feels natural and is not excessive"
+            "- [ ] Vocabulary injection feels natural and is not excessive\n"
+            "- [ ] Multiple Source Cards are concretely reflected in the body\n"
+            "- [ ] The article is not dominated by a single source\n"
+            "- [ ] The post shows what was investigated, built, compared, or decided, not only an abstract theme"
         )
 
         required_structure = (
@@ -439,10 +731,12 @@ The post should feel like a genuine personal reflection — not a dry summary.
 Guidelines:
 {language_guidance}
 
+{coverage_requirements}
+
 {prohibitions}
 
 {final_gate}
-{prev_section}
+{source_cards_section}{prev_style_section}
 ## This week's decision logs
 
 {logs_text}
@@ -602,6 +896,7 @@ def main() -> None:
             file=sys.stderr,
         )
         aggregated_logs_summary = "(No new log entries found for this period.)"
+        source_cards = ""
     else:
         print(f"[generate_weekly_blog] Found {len(log_files)} log file(s).")
         # Phase 2: Read file contents (returns dict)
@@ -609,20 +904,32 @@ def main() -> None:
         # Phase 3: Summarize each file with an independent LLM context
         print("[generate_weekly_blog] Summarizing log files...")
         aggregated_logs_summary = summarize_log_files(log_files_dict)
+        # Phase 4: Build source cards (deterministic, no LLM)
+        source_cards = build_source_cards(log_files_dict)
 
     BLOG_DIR.mkdir(parents=True, exist_ok=True)
     for language in SUPPORTED_LANGUAGES:
-        # Phase 4: Summarize previous blog with an independent LLM context
-        print(f"[generate_weekly_blog] Summarizing previous {language} blog...")
-        prev_blog_summary = summarize_previous_blog(language)
-        if prev_blog_summary:
+        # Phase 5: Extract previous style capsule (deterministic, no LLM)
+        prev_style_capsule = build_previous_style_capsule(language)
+        if prev_style_capsule:
             prev_post = find_previous_blog(language)
-            print(f"[generate_weekly_blog] Using previous {language} blog post: {prev_post.name}")
+            print(f"[generate_weekly_blog] Using previous {language} blog for style reference: {prev_post.name}")
         else:
             print(f"[generate_weekly_blog] No previous {language} blog post found.")
 
-        # Phase 5: Build prompt using compressed summaries only
-        prompt = build_prompt(aggregated_logs_summary, prev_blog_summary, post_date, language)
+        # Phase 6: Build prompt using compressed summaries, source cards, and style capsule
+        prompt = build_prompt(
+            aggregated_logs_summary,
+            source_cards,
+            prev_style_capsule,
+            post_date,
+            language,
+        )
+
+        if DEBUG_PROMPT_DIR:
+            debug_dir = REPO_ROOT / DEBUG_PROMPT_DIR
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            (debug_dir / f"{post_date}-{language}-prompt.md").write_text(prompt, encoding="utf-8")
 
         # Generate content
         content = generate_blog_content(prompt)

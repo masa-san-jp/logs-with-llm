@@ -1,0 +1,73 @@
+# 非エンジニア向けClaudeビジネス自動化 (Claude for Non-Engineers Business Automation)
+
+## コア技術 (Core Technologies)
+### MCP (Model Context Protocol)
+* 外部ツール用コネクタ (Connector for External Tools)
+* Googleカレンダー統合 (Google Calendar Integration)
+* Slack統合 (Slack Integration)
+* HubSpot CRM統合 (HubSpot CRM Integration)
+* 銀行業務API統合 (Banking API Integration)
+
+### Claudeの機能 (Claude Features)
+* ClaudeのAIエージェントモデル (Claude's AI Agent Model)
+* スニペット [再利用可能なマニュアル] (Snippets (Reusable Manuals))
+* Claude Code [CLIツール] (Claude Code (CLI Tool))
+* Artifacts [ライブプレビュー] (Artifacts (Live Preview))
+* プロジェクト/ディレクトリコンテキスト (Project/Directory Context)
+
+---
+
+## 主要なユースケース (Key Use Cases)
+### 営業とCRM (Sales & CRM)
+* 顧客分析シート (Customer Analysis Sheets)
+* 活動レポートの自動化 (Activity Report Automation)
+* リード（見込み顧客）の優先順位付け (Lead Prioritization)
+* 戦略的営業チェックリスト (Strategic Selling Checklists)
+
+### コミュニケーション (Communication)
+* Slackスレッドのモニタリング (Slack Thread Monitoring)
+* 日報の自動作成 (Automated Daily Reports)
+* 会議議事録の構造化 (Meeting Minutes Structuring)
+* メールの要約・レポート (Email Summary Reports)
+
+### 開発と運用 (Development & Ops)
+* Gitブランチ＆PR（プルリクエスト）作成 (Git Branch & PR Creation)
+* バックログの課題管理 (Backlog Issue Management)
+* GAS [Google Apps Script] コーディング (GAS (Google Apps Script) Coding)
+
+### ドキュメント作成 (Document Creation)
+* PowerPointプレゼンテーションの下書き (PowerPoint Presentation Drafts)
+* ワークフローのファイル管理 (Workflow File Management)
+* 定型ドキュメントの生成 (Handover Document Generation)
+
+---
+
+## ベストプラクティスと教訓 (Best Practices & Lessons)
+### 導入のコツ (Implementation Tips)
+* 自然言語による要件定義 (Natural Language Requirements)
+* 反復的なフィードバックループ (Iterative Feedback Loop)
+* ディレクトリ構造の設計 (Directory Structure Design)
+* Markdown設定用のObsidian (Obsidian for Markdown Setting)
+
+### 得られた教訓 (Lessons Learned)
+* 費用対効果のバランス (Cost-Benefit Balance)
+* 過剰な自動化の回避 (Avoid Over-Automation)
+* 人間の確認が必要 (Human Verification Required)
+* AIスキル格差への対応 (Handling AI Skill Level Gaps)
+
+### セキュリティ (Security)
+* パスワードのハードコード回避 (Avoid Hardcoding Passwords)
+* 1Password CLIの利用 (Use 1Password CLI)
+* 共有メモに個人情報を入れない (No PII in Shared Notes)
+* 影響の大きいアクションの制限 (Blocking High-Impact Deletions)
+
+---
+
+## コスト管理 (Cost Management)
+* 利用ベースの価格モデル (Usage-Based Pricing Models)
+* 最適化のためのモデル選択 (Model Selection Optimization)
+* 保存用のプロンプトキャッシュ (Prompt Caching for Savings)
+* 組織の上限設定 (Setting Organization Limits)
+
+---
+

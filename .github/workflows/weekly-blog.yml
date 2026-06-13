@@ -1,8 +1,8 @@
 name: Weekly Blog Generator
 
 on:
-  schedule:
-    - cron: '0 9 * * 5'  # 毎週金曜 9:00 UTC
+  # Scheduled generation moved to the gx10 box (local Ollama: gpt-oss 20b/120b).
+  # See scripts/run_weekly_blog_gx10.sh. Cloud run kept only for manual dispatch.
   workflow_dispatch:
     inputs:
       llm_provider:

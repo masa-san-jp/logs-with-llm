@@ -26,7 +26,11 @@ Environment variables:
     ANTHROPIC_API_KEY required for anthropic mode
     ANTHROPIC_MODEL   model name for anthropic mode (default: claude-sonnet-4-20250514)
     OLLAMA_URL        Ollama endpoint (default: http://localhost:11434)
-    OLLAMA_MODEL      model name for ollama mode (default: llama3)
+    OLLAMA_MODEL      fallback model name for ollama mode (default: gpt-oss:20b)
+    OLLAMA_SUMMARIZE_MODEL  model for the log-summarize phase (default: OLLAMA_MODEL)
+    OLLAMA_COMPOSE_MODEL    model for the article-writing phase (default: gpt-oss:120b)
+    OLLAMA_THINK      enable reasoning/thinking mode (default: true)
+    OLLAMA_TIMEOUT    per-request timeout seconds for ollama (default: 1800)
     BLOG_DATE         override output date (YYYY-MM-DD); default: today UTC
     LOGS_DIR          path to logs directory (default: logs)
     BLOG_DIR          path to blog directory (default: blog)
@@ -59,6 +63,11 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434").rstrip("/")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "gpt-oss:20b")
+# Two-model split: a lightweight model condenses raw logs, a heavyweight model writes the article.
+OLLAMA_SUMMARIZE_MODEL = os.environ.get("OLLAMA_SUMMARIZE_MODEL", OLLAMA_MODEL)
+OLLAMA_COMPOSE_MODEL = os.environ.get("OLLAMA_COMPOSE_MODEL", "gpt-oss:120b")
+OLLAMA_THINK = os.environ.get("OLLAMA_THINK", "true").lower() in ("1", "true", "yes", "on")
+OLLAMA_TIMEOUT = int(os.environ.get("OLLAMA_TIMEOUT", "1800"))
 LOGS_DIR = REPO_ROOT / os.environ.get("LOGS_DIR", "logs")
 BLOG_DIR = REPO_ROOT / os.environ.get("BLOG_DIR", "blog")
 STATE_FILE = REPO_ROOT / os.environ.get("STATE_FILE", ".blog_state.json")
@@ -260,7 +269,7 @@ def summarize_content(content: str, source_name: str) -> str:
     )
     print(f"[generate_weekly_blog] Summarizing: {source_name}")
     try:
-        return generate_blog_content(prompt)
+        return generate_blog_content(prompt, ollama_model=OLLAMA_SUMMARIZE_MODEL)
     except Exception as exc:
         print(
             f"[generate_weekly_blog] Summarization failed for {source_name}: {exc}; "
@@ -810,14 +819,20 @@ def _call_anthropic(prompt: str) -> str:
     return body["content"][0]["text"]
 
 
-def _call_ollama(prompt: str) -> str:
+def _strip_thinking(text: str) -> str:
+    """Remove any inline reasoning block a thinking model may emit in the body."""
+    return re.sub(r"<think(?:ing)?>[\s\S]*?</think(?:ing)?>", "", text).strip()
+
+
+def _call_ollama(prompt: str, model: str) -> str:
     import urllib.request
 
     payload = json.dumps(
         {
-            "model": OLLAMA_MODEL,
+            "model": model,
             "prompt": prompt,
             "stream": False,
+            "think": OLLAMA_THINK,
         }
     ).encode()
 
@@ -827,18 +842,24 @@ def _call_ollama(prompt: str) -> str:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=300) as resp:
+    with urllib.request.urlopen(req, timeout=OLLAMA_TIMEOUT) as resp:
         body = json.loads(resp.read())
-    return body.get("response", "")
+    # With think=true Ollama returns reasoning in a separate "thinking" field, so
+    # "response" already holds the answer; strip any inline block just in case.
+    return _strip_thinking(body.get("response", ""))
 
 
-def generate_blog_content(prompt: str) -> str:
+def generate_blog_content(prompt: str, ollama_model: Optional[str] = None) -> str:
     if LLM_PROVIDER == "anthropic":
         print(f"[generate_weekly_blog] Using Anthropic (model={ANTHROPIC_MODEL})")
         return _call_anthropic(prompt)
     elif LLM_PROVIDER == "ollama":
-        print(f"[generate_weekly_blog] Using Ollama ({OLLAMA_URL}, model={OLLAMA_MODEL})")
-        return _call_ollama(prompt)
+        model = ollama_model or OLLAMA_MODEL
+        print(
+            f"[generate_weekly_blog] Using Ollama ({OLLAMA_URL}, model={model}, "
+            f"think={OLLAMA_THINK})"
+        )
+        return _call_ollama(prompt, model)
     else:
         print(f"[generate_weekly_blog] Using OpenAI (model={OPENAI_MODEL})")
         return _call_openai(prompt)
@@ -933,8 +954,8 @@ def main() -> None:
             debug_dir.mkdir(parents=True, exist_ok=True)
             (debug_dir / f"{post_date}-{language}-prompt.md").write_text(prompt, encoding="utf-8")
 
-        # Generate content
-        content = generate_blog_content(prompt)
+        # Generate content (heavyweight model for the article itself)
+        content = generate_blog_content(prompt, ollama_model=OLLAMA_COMPOSE_MODEL)
 
         # Write output
         output_path = blog_output_path(post_date, language)

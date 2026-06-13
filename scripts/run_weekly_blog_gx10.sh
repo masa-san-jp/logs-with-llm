@@ -20,9 +20,16 @@ export OLLAMA_TIMEOUT="${OLLAMA_TIMEOUT:-1800}"
 echo "[run_weekly_blog_gx10] $(date '+%Y-%m-%d %H:%M:%S') start"
 
 git pull -q --ff-only origin main || true
-python3 scripts/generate_weekly_blog.py
 
-if git status --porcelain blog/ .blog_state.json | grep -q .; then
+# Capture output so we can detect an empty-week placeholder and avoid publishing
+# a thin post. The generator prints this line to stderr when no logs are in range.
+RUN_OUT=$(python3 scripts/generate_weekly_blog.py 2>&1)
+echo "$RUN_OUT"
+
+if printf '%s' "$RUN_OUT" | grep -q "No log files found for this period"; then
+    echo "[run_weekly_blog_gx10] no source logs this week — skipping commit (no thin post published)"
+    git checkout -- blog/ .blog_state.json 2>/dev/null || true
+elif git status --porcelain blog/ .blog_state.json | grep -q .; then
     git add blog/ .blog_state.json
     git commit -m "📝 Weekly blog post (gx10 local LLM)"
     git push origin HEAD:main

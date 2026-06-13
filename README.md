@@ -16,10 +16,12 @@
 
 ## GitHub Actions で自動化していること
 ### 1. 週次ブログ生成
-- ワークフロー: `.github/workflows/weekly-blog.yml`
 - 実行スクリプト: `scripts/generate_weekly_blog.py`
 - 内容: `logs/` の直近記録を集約し、日本語版・英語版の週次ブログを `blog/` に出力
 - 詳細: `docs/weekly-blog-generator-spec.md`
+- **定期実行は gx10（ローカル Ollama）に移行**: `scripts/run_weekly_blog_gx10.sh` を gx10 の cron から実行する。要約フェーズは `gpt-oss:20b`、記事生成フェーズは `gpt-oss:120b`、reasoning（thinking）on。土曜 08:00 JST までに完了するよう早朝起動（例: `0 5 * * 6`）。
+  - クラウド（`.github/workflows/weekly-blog.yml`）は `workflow_dispatch` の手動実行のみ残し、定期 cron は停止（二重生成防止）。
+  - モデル切替の環境変数: `OLLAMA_SUMMARIZE_MODEL` / `OLLAMA_COMPOSE_MODEL` / `OLLAMA_THINK` / `OLLAMA_TIMEOUT`
 
 ### 2. 週次ドキュメント目標 Issue 生成
 - ワークフロー: `.github/workflows/weekly-doc-goal-issue.yml`

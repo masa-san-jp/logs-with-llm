@@ -197,12 +197,15 @@ class TestBuildPrompt:
         assert "Previous blog post" not in prompt
 
     def test_includes_prompt_guidance_strings(self):
-        # JA prompt: reader-value opening + concrete next-action ending (2026-06-14 rework)
+        # JA: narrative accumulation — short prose preface + narrative next-step ending (2026-06-14)
         prompt_ja = gen.build_prompt("logs", "cards", "capsule", date(2026, 3, 10), "ja")
-        assert "読むと何が得られるか" in prompt_ja
+        assert "前書き" in prompt_ja
+        assert "ナラティブ" in prompt_ja
         assert "ネクストアクション" in prompt_ja
+        # EN leans business-philosophical / thought-leadership
         prompt_en = gen.build_prompt("logs", "cards", "capsule", date(2026, 3, 10), "en")
         assert "Before writing your output, confirm each of the following" in prompt_en
+        assert "business-philosophical" in prompt_en
 
     def test_japanese_prompt_requests_japanese_output(self):
         prompt = gen.build_prompt("logs", "", "", date(2026, 3, 10), "ja")

@@ -201,7 +201,8 @@ class TestBuildPrompt:
         prompt_ja = gen.build_prompt("logs", "cards", "capsule", date(2026, 3, 10), "ja")
         assert "前書き" in prompt_ja
         assert "ナラティブ" in prompt_ja
-        assert "ネクストアクション" in prompt_ja
+        assert "次にやりたいこと" in prompt_ja
+        assert "一方的な技術独白" in prompt_ja
         # EN leans business-philosophical / thought-leadership
         prompt_en = gen.build_prompt("logs", "cards", "capsule", date(2026, 3, 10), "en")
         assert "Before writing your output, confirm each of the following" in prompt_en

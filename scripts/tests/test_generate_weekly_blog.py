@@ -197,9 +197,10 @@ class TestBuildPrompt:
         assert "Previous blog post" not in prompt
 
     def test_includes_prompt_guidance_strings(self):
-        # English uses research-note style; Japanese uses "Concept: Angle" essay format
+        # JA prompt: reader-value opening + concrete next-action ending (2026-06-14 rework)
         prompt_ja = gen.build_prompt("logs", "cards", "capsule", date(2026, 3, 10), "ja")
-        assert "概念：切り口" in prompt_ja
+        assert "読むと何が得られるか" in prompt_ja
+        assert "ネクストアクション" in prompt_ja
         prompt_en = gen.build_prompt("logs", "cards", "capsule", date(2026, 3, 10), "en")
         assert "Before writing your output, confirm each of the following" in prompt_en
 
@@ -285,11 +286,13 @@ class TestBuildPrompt:
         assert "analytical and informative" in prompt
         assert "Personal feelings and reactions are absent" in prompt
 
-    def test_vocabulary_injection_relaxed_ja(self):
+    def test_prompt_vocab_not_carried_ja(self):
+        # 2026-06-14 rework: no vocabulary injection; the prompt must instead tell the
+        # model NOT to carry the prompt's own abstract vocabulary into the output.
         prompt = gen.build_prompt("logs", "", "", date(2026, 3, 10), "ja")
-        assert "3〜6箇所" in prompt
-        # Old forced injection count should not appear
+        assert "3〜6箇所" not in prompt
         assert "5〜15 箇所を文脈に合わせて使用する" not in prompt
+        assert "そのまま持ち込まない" in prompt
 
 
 # ---------------------------------------------------------------------------

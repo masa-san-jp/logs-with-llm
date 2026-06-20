@@ -705,20 +705,141 @@ rustdesk
 
 またはアプリケーション一覧からRustDeskを起動する。
 
+#### Ubuntuで日本語UIが四角形になる場合
+
+Ubuntu環境でRustDeskの日本語UIが四角形、いわゆる「豆腐」表示になる場合は、いったん英語UIで起動して設定を進める。
+
+```bash
+LANG=C rustdesk
+```
+
+または:
+
+```bash
+LANG=en_US.UTF-8 rustdesk
+```
+
+`en_US.UTF-8` が未生成の場合は、先に以下を実行する。
+
+```bash
+sudo locale-gen en_US.UTF-8
+sudo update-locale
+```
+
+アプリ一覧から起動しても英語UIにしたい場合は、RustDeskの `.desktop` ファイルをユーザー側へコピーして `Exec=` 行を変更する。
+
+```bash
+mkdir -p ~/.local/share/applications
+cp /usr/share/applications/rustdesk.desktop ~/.local/share/applications/
+nano ~/.local/share/applications/rustdesk.desktop
+```
+
+`Exec=` 行を以下のようにする。
+
+```ini
+Exec=env LANG=C rustdesk
+```
+
+実行ファイルがフルパスで必要な場合は確認する。
+
+```bash
+which rustdesk
+```
+
+例:
+
+```ini
+Exec=env LANG=C /usr/bin/rustdesk
+```
+
 ### 15.4 Direct IP Accessを有効化する
 
 RustDeskの画面で以下を設定する。
 
 1. `Settings` を開く。
 2. `Security` を開く。
-3. `Enable direct IP access` をオンにする。
-4. `Permanent password` を設定する。
+3. `Unlock Security` が表示された場合は押す。
+4. 認証を求められたら解除する。
+5. `Enable direct IP access` をオンにする。
+6. `Direct IP access port` は既定の `21118` のままにする。
+7. `Permanent password` を設定する。
+
+`Unlock Security` は、RustDeskのSecurity設定を変更するためのロック解除。表示内容により、入力するものが異なる。
+
+| 表示内容 | 入力するもの |
+|---|---|
+| RustDesk内のパスワード入力欄 | 既存のPermanent password、またはRustDeskで以前設定したセキュリティ用パスワード |
+| Ubuntuの認証ダイアログ | Ubuntuログインユーザーのパスワード、つまり `sudo` で使うパスワード |
+
+まだPermanent passwordを設定していない段階でRustDesk内のパスワード欄が出る場合は、以下を順に試す。
+
+1. 空欄のままOK
+2. Ubuntuログインパスワード
+3. RustDeskで以前設定したPermanent password
 
 注意:
 
 - 一時パスワードだけだと、無人状態のGB10に接続しづらい。
 - Permanent passwordは長く強いものにする。
+- Ubuntuログインパスワード、Tailscaleログインパスワード、Googleアカウントのパスワードとは別のものにする。
 - 使い回しのパスワードは避ける。
+
+#### Direct IP access portは21118のままでよい
+
+Tailscale経由でRustDeskを使う場合、`Direct IP access port` は既定の `21118` のままでよい。
+
+```text
+Enable direct IP access: ON
+Direct IP access port: 21118
+```
+
+Tailscale内の通信として扱うため、自宅ルーターで `21118` をインターネットへ公開する必要はない。
+
+ポート変更が必要になるのは、主に以下の場合だけ。
+
+| ケース | 対応 |
+|---|---|
+| すでに別プロセスが `21118` を使っている | `21120` など別ポートへ変更する |
+| 同一PC上で複数のRustDesk系サービスを動かす | ポートを分ける |
+| ファイアウォールで `21118` が通らない | 許可するか別ポートを検討する |
+| 会社ネットワーク側で特定ポートが制限される | 別ポートを検討する |
+
+#### RustDeskが21118で待ち受けているか確認する
+
+GB10で以下を実行する。
+
+```bash
+ss -lntup | grep 21118
+```
+
+成功例:
+
+```text
+tcp   LISTEN 0      128                                     *:21118            *:*    users:(("rustdesk",pid=1829890,fd=19))
+```
+
+この表示は、RustDeskがTCP `21118` 番ポートで接続待ち受け中であることを意味する。
+
+| 表示 | 意味 |
+|---|---|
+| `LISTEN` | 接続待ち受け中 |
+| `*:21118` | 21118番ポートで待ち受け中 |
+| `users:(("rustdesk"...))` | RustDeskプロセスが待ち受けている |
+| `tcp` | TCP接続を受け付ける |
+
+何も表示されない場合は、RustDeskを再起動する。
+
+```bash
+pkill rustdesk
+LANG=C rustdesk
+```
+
+Ubuntuのファイアウォール `ufw` が有効な場合は、Tailscaleインターフェースからの接続を許可する。
+
+```bash
+sudo ufw allow in on tailscale0 to any port 21118 proto tcp
+sudo ufw status
+```
 
 ---
 
@@ -737,6 +858,12 @@ MacBook ProにもRustDeskを入れる。
 
 ```text
 100.xxx.xxx.xxx
+```
+
+通常はTailscale IPだけでよい。うまくいかない場合だけ、ポート付きで入力する。
+
+```text
+100.xxx.xxx.xxx:21118
 ```
 
 6. 接続する。
@@ -759,6 +886,12 @@ MacBook ProにもRustDeskを入れる。
 
 ```text
 100.xxx.xxx.xxx
+```
+
+通常はTailscale IPだけでよい。うまくいかない場合だけ、ポート付きで入力する。
+
+```text
+100.xxx.xxx.xxx:21118
 ```
 
 6. GB10側で設定したPermanent passwordを入力する。
@@ -998,10 +1131,11 @@ whoami
 - GB10でRustDeskが起動しているか。
 - GB10がGUIログイン済みか。
 - RustDeskのDirect IP accessが有効か。
+- Direct IP access portが `21118` になっているか。
 - 接続先にRustDesk IDではなくTailscale IPを入れているか。
 - Tailscale上でGB10にpingできるか。
 
-確認:
+Tailscale疎通確認:
 
 ```bash
 ping home-gb10
@@ -1011,6 +1145,24 @@ ping home-gb10
 
 ```bash
 ping 100.xxx.xxx.xxx
+```
+
+RustDeskの待ち受け確認:
+
+```bash
+ss -lntup | grep 21118
+```
+
+以下のように `rustdesk` が `LISTEN` していれば、GB10側のRustDesk Direct IP Accessは起動している。
+
+```text
+tcp   LISTEN 0      128                                     *:21118            *:*    users:(("rustdesk",pid=1829890,fd=19))
+```
+
+Tailscale IPだけで接続できない場合は、接続元RustDeskでポート付きも試す。
+
+```text
+100.xxx.xxx.xxx:21118
 ```
 
 ---
@@ -1040,6 +1192,8 @@ ping 100.xxx.xxx.xxx
 - [ ] MacBook Proから職場WindowsへRDPできる
 - [ ] GB10にRustDeskを入れた
 - [ ] GB10でDirect IP accessを有効にした
+- [ ] Direct IP access portが `21118` になっている
+- [ ] `ss -lntup | grep 21118` でRustDeskの待ち受けを確認した
 - [ ] MacBook ProからGB10へRustDesk接続できる
 - [ ] 職場WindowsからGB10へRustDesk接続できる
 

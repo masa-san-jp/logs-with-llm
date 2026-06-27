@@ -3,7 +3,7 @@ title: "週報：複数デバイスの安全な常時接続と、エージェン
 emoji: "🔐"
 type: "tech"
 topics: ["Tailscale", "systemd", "Telegram", "セキュリティ", "AIエージェント"]
-published: false
+published: true
 ---
 
 常駐サービスを増やすほど、つまずくのは派手な攻撃ではなく地味な運用の罠でした。今週いちばん象徴的だったのは、同じ Telegram bot トークンを 2 台のホストで同時に使った瞬間に `getUpdates` がぶつかり、`409 Conflict` でゲートウェイが黙る、という類いのハマりどころです。

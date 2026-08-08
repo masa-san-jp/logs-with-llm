@@ -447,6 +447,19 @@ def build_source_cards(log_files_dict: dict[str, str]) -> str:
 # Previous blog context / output paths
 # ---------------------------------------------------------------------------
 
+def _strip_bold(markdown: str) -> str:
+    """太字（**…** / __…__）を落とす。マサさん指示 2026-08-08「太字は使わないように」。
+
+    フェンス内のコードは触らない。強調記号だけ外し、中身はそのまま残す。
+    プロンプトで禁止するだけだと生成のたびに漏れるので、書き出しの直前で必ず通す。
+    """
+    parts = re.split(r"(```[\s\S]*?```|~~~[\s\S]*?~~~)", markdown)
+    for i in range(0, len(parts), 2):
+        parts[i] = re.sub(r"\*\*(.+?)\*\*", r"\1", parts[i], flags=re.S)
+        parts[i] = re.sub(r"__(.+?)__", r"\1", parts[i], flags=re.S)
+    return "".join(parts)
+
+
 def blog_output_path(post_date: date, language: str) -> Path:
     language = validate_language(language)
     date_token = post_date.strftime("%Y%m%d")
@@ -627,7 +640,8 @@ def build_prompt(
             "- 感情表現を捏造しない\n"
             "- 他者の作品への批判強度を勝手に増減させない\n"
             "- ログが分析していないテーマを新たに読み込まない\n"
-            "- 数字・データ・引用を創作しない"
+            "- 数字・データ・引用を創作しない\n"
+            "- 太字（**）を使わない。強調は文の組み立てで出す"
         )
 
         final_gate = (
@@ -964,7 +978,7 @@ def main() -> None:
 
         # Write output
         output_path = blog_output_path(post_date, language)
-        output_path.write_text(content + "\n", encoding="utf-8")
+        output_path.write_text(_strip_bold(content) + "\n", encoding="utf-8")
         print(f"[generate_weekly_blog] Written: {output_path.relative_to(REPO_ROOT)}")
 
     # Update state

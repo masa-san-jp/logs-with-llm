@@ -43,9 +43,10 @@ deliver_telegram() {
     [ -n "$t" ] && tokens+=("$t")
   done
   [ "${#tokens[@]}" -gt 0 ] || { echo "[run_weekly_blog_gx10] no telegram token found"; return 0; }
-  CHAT="$chat" PUB="$PUBLISH" python3 - "${tokens[@]}" -- "${files[@]}" <<'PY'
+  CHAT="$chat" PUB="$PUBLISH" PROVENANCE="${PROVENANCE:-}" python3 - "${tokens[@]}" -- "${files[@]}" <<'PY'
 import os, sys, json, urllib.request, urllib.parse
 chat = os.environ["CHAT"]; published = os.environ.get("PUB") == "1"
+provenance = os.environ.get("PROVENANCE", "").strip()
 sep = sys.argv.index("--")
 tokens = sys.argv[1:sep]; files = sys.argv[sep+1:]
 
@@ -62,6 +63,8 @@ def send(token, text):
 # Pick the bot that can actually reach this chat (probe with the header line).
 banner = ("📝 今週のブログ（公開済み）" if published
           else "📝 今週のブログ案（レビュー用・未公開）")
+if provenance:
+    banner += "\n\n数値の出所チェック:\n" + provenance
 good = None
 for tk in tokens:
     if send(tk, banner):
@@ -80,6 +83,34 @@ for path in files:
 PY
 }
 
+# Send a banner image (note/Medium concept banner) to Telegram. Best-effort.
+send_banner_telegram() {
+  local img="$1" chat="${BLOG_NOTIFY_CHAT:-8903310093}"
+  [ -f "$img" ] && [ -n "$chat" ] || return 0
+  local tenv tok
+  for tenv in "$HOME"/.claude/channels/*/.env; do
+    [ -f "$tenv" ] || continue
+    tok=$(grep -m1 '^TELEGRAM_BOT_TOKEN=' "$tenv" 2>/dev/null | cut -d= -f2- || true)
+    [ -n "$tok" ] || continue
+    if curl -sS --max-time 60 -F "chat_id=${chat}" -F "photo=@${img}" \
+         -F "caption=🖼️ 今週のバナー（note/Medium用・記事から自動生成）" \
+         "https://api.telegram.org/bot${tok}/sendPhoto" 2>/dev/null | grep -q '"ok":true'; then
+      break
+    fi
+  done
+}
+
+# 記事本文から note/Medium 用の概念バナーを生成（ローカル・無料）。失敗しても本処理は止めない。
+CONCEPT_GEN="${CONCEPT_GEN:-/home/masa/dev/Agent-Lab/Agent-team/tools/local-image-gen/concept_image.py}"
+gen_banner() {  # $1=JA記事(相対パス) -> echo バナー相対パス（失敗時は空）
+  local post="$1" banner
+  [ -n "$post" ] && [ -f "$post" ] && [ -f "$CONCEPT_GEN" ] || return 0
+  banner="${post%.md}-banner.png"
+  if python3 "$CONCEPT_GEN" --file "$post" --out "$banner" >/dev/null 2>&1; then
+    [ -f "$banner" ] && echo "$banner"
+  fi
+}
+
 echo "[run_weekly_blog_gx10] $(date '+%Y-%m-%d %H:%M:%S') start (PUBLISH=$PUBLISH)"
 
 git pull -q --ff-only origin main || true
@@ -94,15 +125,29 @@ if printf '%s' "$RUN_OUT" | grep -q "No log files found for this period"; then
     echo "[run_weekly_blog_gx10] no source logs this week — nothing to do"
     git checkout -- blog/ .blog_state.json 2>/dev/null || true
 elif [ "${#POSTS[@]}" -gt 0 ]; then
+    # JA 記事（-en でない方）からバナーを自動生成
+    JA_POST=$(printf '%s\n' "${POSTS[@]}" | grep -vE '\-en\.md$' | head -1)
+    # 本文の数値が元ログにあるか照合する（2026-08-08: 元ログに無い実測値が公開された）。
+    # 公開は止めない——判定材料として通知に載せる。
+    PROVENANCE=""
+    for p in "${POSTS[@]}"; do
+        line=$(python3 scripts/check_number_provenance.py "$p" 2>/dev/null || true)
+        [ -n "$line" ] && PROVENANCE="${PROVENANCE}$(basename "$p"): ${line#provenance: }"$'\n'
+    done
+    export PROVENANCE
+    printf '%s' "$PROVENANCE"
+    BANNER=$(gen_banner "$JA_POST" || true)
     deliver_telegram "${POSTS[@]}" || true
+    [ -n "$BANNER" ] && send_banner_telegram "$BANNER" || true
     if [ "$PUBLISH" = "1" ]; then
         git add blog/ .blog_state.json
-        git commit -m "📝 Weekly blog post (gx10 local LLM)"
+        [ -n "$BANNER" ] && git add "$BANNER" 2>/dev/null || true
+        git commit -m "📝 Weekly blog post + banner (gx10 local LLM)"
         git push origin HEAD:main
-        echo "[run_weekly_blog_gx10] published and delivered"
+        echo "[run_weekly_blog_gx10] published and delivered (banner: ${BANNER:-none})"
     else
         git checkout -- blog/ .blog_state.json 2>/dev/null || true
-        echo "[run_weekly_blog_gx10] review mode — delivered to Telegram, NOT published (set PUBLISH=1 to publish)"
+        echo "[run_weekly_blog_gx10] review mode — delivered to Telegram, NOT published (banner: ${BANNER:-none})"
     fi
 else
     echo "[run_weekly_blog_gx10] no changes to deliver"
